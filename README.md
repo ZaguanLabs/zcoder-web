@@ -1,6 +1,8 @@
 # zweb
 
-A private, web-based control surface for one or more `zcoder.zsh` protocol-1 servers. The interface follows the original TUI: flat panels, compact server state, remote sessions, plain-text transcripts, model readiness, command approvals, and cancellation.
+A private, web-based control surface for one or more [`zcoder.zsh`](https://github.com/ZaguanLabs/zcoder.zsh) protocol-1 servers. The interface follows the original TUI: flat panels, compact server state, remote sessions, plain-text transcripts, model readiness, command approvals, and cancellation.
+
+> **Note:** This web interface requires `zcoder.zsh` to be running. zcoder.zsh provides the backend protocol-1 servers that zweb connects to — the two projects are interlinked and zweb cannot function without it.
 
 The browser never connects to zcoder directly. It talks only to this Next.js application; zweb reads upstream URLs and bearer tokens on the server from `.env.local`.
 
