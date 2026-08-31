@@ -2,7 +2,11 @@
 
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Icon } from "@/components/icons";
+import Link from "next/link";
+import styles from "@/app/login/login.module.css";
+
+const cls = (...parts: (string | boolean | undefined | null)[]) =>
+  parts.filter(Boolean).join(" ");
 
 export function LoginForm({ initialError = "" }: { initialError?: string }) {
   const router = useRouter();
@@ -40,38 +44,105 @@ export function LoginForm({ initialError = "" }: { initialError?: string }) {
   }
 
   return (
-    <main className="login-shell">
-      <section className="login-panel" aria-labelledby="login-title">
-        <header className="login-header">
-          <div className="login-access-line"><span><i /> Access control</span><b>Locked</b></div>
-          <div className="login-lockup">
-            <div className="brand-mark" aria-hidden="true"><Icon name="bolt" size={22} /></div>
-            <div>
-              <p className="eyebrow">Remote zcoder</p>
-              <h1 id="login-title">zweb<span className="cursor-mark">_</span></h1>
-            </div>
-          </div>
-          <p className="login-copy">Sign in to reach your configured servers.</p>
-        </header>
+    <main className={styles.page}>
+      {/* Animated background */}
+      <div className={styles.orbs} aria-hidden="true">
+        <div className={cls(styles.orb, styles["orb--1"])} />
+        <div className={cls(styles.orb, styles["orb--2"])} />
+        <div className={cls(styles.orb, styles["orb--3"])} />
+      </div>
+      <div className={styles.gridOverlay} aria-hidden="true" />
 
-        <form method="post" action="/api/auth/login" onSubmit={submit} className="login-form">
-          <div className="login-field">
-            <label htmlFor="username">Operator</label>
-            <input ref={usernameRef} id="username" name="username" type="text" autoComplete="username" autoCapitalize="none" spellCheck={false} disabled={pending} required />
+      {/* Card */}
+      <div className={styles.card}>
+        {/* Logo */}
+        <Link href="/" className={styles.logo}>
+          <div className={styles.logoIcon}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="16 18 22 12 16 6" />
+              <polyline points="8 6 2 12 8 18" />
+            </svg>
           </div>
-          <div className="login-field">
-            <label htmlFor="password">Passphrase</label>
-            <div className="password-field">
-              <input id="password" name="password" type={showPassword ? "text" : "password"} autoComplete="current-password" disabled={pending} required />
-              <button type="button" className="password-toggle" aria-pressed={showPassword} onClick={() => setShowPassword((visible) => !visible)}>{showPassword ? "Hide" : "Show"}</button>
+          <div className={styles.logoText}>z<span>web</span></div>
+        </Link>
+        <p className={styles.tagline}>Remote zcoder access point</p>
+
+        {/* Form */}
+        <form className={styles.form} method="post" onSubmit={submit} aria-busy={pending}>
+          <div className={styles.field}>
+            <label className={styles.fieldLabel} htmlFor="username">Operator</label>
+            <div className={styles.inputWrap}>
+              <input
+                ref={usernameRef}
+                className={styles.input}
+                id="username"
+                name="username"
+                type="text"
+                autoComplete="username"
+                autoCapitalize="none"
+                spellCheck={false}
+                disabled={pending}
+                required
+                aria-label="Operator"
+                placeholder="username"
+              />
             </div>
           </div>
-          {error ? <p className="form-error" role="alert">{error}</p> : null}
-          <button type="submit" className="unlock-button" disabled={pending}>{pending ? "Verifying…" : "Unlock console"}<span aria-hidden="true">→</span></button>
+
+          <div className={styles.field}>
+            <label className={styles.fieldLabel} htmlFor="password">Passphrase</label>
+            <div className={styles.passwordWrap}>
+              <input
+                className={styles.input}
+                id="password"
+                name="password"
+                type={showPassword ? "text" : "password"}
+                autoComplete="current-password"
+                disabled={pending}
+                required
+                aria-label="Passphrase"
+                placeholder={pending ? "checking…" : "passphrase"}
+              />
+              <button
+                type="button"
+                className={styles.passwordToggle}
+                aria-pressed={showPassword}
+                onClick={() => setShowPassword((v) => !v)}
+                disabled={pending}
+              >
+                {showPassword ? "hide" : "show"}
+              </button>
+            </div>
+          </div>
+
+          {error ? <p className={styles.error} role="alert">{error}</p> : null}
+
+          <button type="submit" className={styles.submit} disabled={pending}>
+            <span>{pending ? "authenticating…" : "unlock"}</span>
+            <span className={styles.submitArrow} aria-hidden="true">{pending ? "…" : "→"}</span>
+          </button>
         </form>
 
-        <footer className="security-note"><span aria-hidden="true" /> POST only <b aria-hidden="true">·</b> upstream keys stay server-side</footer>
-      </section>
+        {/* Footer */}
+        <Footer />
+      </div>
     </main>
+  );
+}
+
+function Footer() {
+  const [host, setHost] = useState<string>("");
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => {
+      setHost(new URL(window.location.origin).hostname);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, []);
+  return (
+    <footer className={styles.footer}>
+      <span className={styles.footerDot} aria-hidden="true" />
+      <span>credentials stay on</span>
+      <span className={styles.footerHost}>{host || "this origin"}</span>
+    </footer>
   );
 }
