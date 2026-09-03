@@ -55,7 +55,7 @@ const TranscriptMessage = memo(function TranscriptMessage({ event }: { event: Fl
 export function ConsoleApp() {
   const router = useRouter();
   const [servers, setServers] = useState<ServerSummary[]>([]);
-  const [serverId, setServerId] = useState("");
+  const [serverId, setServerId] = useState(() => sessionStorage.getItem("zcoder-server-id") ?? "");
   const [hello, setHello] = useState<Flat | null>(null);
   const [sessions, setSessions] = useState<Flat[]>([]);
   const [sessionId, setSessionId] = useState("");
@@ -112,7 +112,16 @@ export function ConsoleApp() {
       const metadata = await rpc(id, { action: "hello" }) as Flat;
       if (metadata.protocol !== 1) throw new Error("This server does not speak zcoder protocol 1");
       setHello(metadata);
-      setStatus(metadata.model_status === "warming" ? "Warming up" : metadata.model_status === "error" ? "Model error" : "Ready");
+      if (metadata.model_status === "warming") {
+        setStatus("Warming up");
+        let model = metadata;
+        while (model.model_status === "warming") {
+          await new Promise((resolve) => setTimeout(resolve, 700));
+          model = await rpc(id, { action: "model.get" }) as Flat;
+        }
+        if (model.model_status === "error") throw new Error(String(model.model_error || "Model preparation failed"));
+      }
+      setStatus(metadata.model_status === "error" ? "Model error" : "Ready");
       if (metadata.sessions === true) {
         const list = await refreshSessions(id);
         const current = list.find((session) => session.current === 1);
@@ -134,8 +143,10 @@ export function ConsoleApp() {
         if (cancelled) return;
         setServers(list);
         if (list[0]) {
-          setServerId(list[0].id);
-          void connect(list[0].id);
+          const initialId = serverId || list[0].id;
+          setServerId(initialId);
+          sessionStorage.setItem("zcoder-server-id", initialId);
+          void connect(initialId);
         } else {
           setConnecting(false);
           setStatus("No servers");
@@ -322,7 +333,7 @@ export function ConsoleApp() {
         <div className="wordmark"><span><Icon name="bolt" size={17} /></span> zweb <small>/ remote zcoder</small></div>
         <div className="server-switcher">
           <label htmlFor="server-select">Server</label>
-          <select id="server-select" value={serverId} disabled={busy} onChange={(event) => { setServerId(event.target.value); void connect(event.target.value); }}>
+          <select id="server-select" value={serverId} disabled={busy} onChange={(event) => { const id = event.target.value; sessionStorage.setItem("zcoder-server-id", id); setServerId(id); void connect(id); }}>
             {servers.map((server) => <option key={server.id} value={server.id}>{server.name}</option>)}
           </select>
         </div>
@@ -336,7 +347,7 @@ export function ConsoleApp() {
         </button>
         <label className="mobile-server-switcher">
           <span className="sr-only">Server</span>
-          <select value={serverId} aria-label="Active server" disabled={busy} onChange={(event) => { setMobileSessions(false); setServerId(event.target.value); void connect(event.target.value); }}>
+          <select value={serverId} aria-label="Active server" disabled={busy} onChange={(event) => { const id = event.target.value; sessionStorage.setItem("zcoder-server-id", id); setMobileSessions(false); setServerId(id); void connect(id); }}>
             {servers.map((server) => <option key={server.id} value={server.id}>{server.name}</option>)}
           </select>
         </label>
