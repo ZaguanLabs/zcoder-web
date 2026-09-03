@@ -47,10 +47,16 @@ function roleName(role: Flat["role"]) {
   return String(role || "System");
 }
 
+function stripAnsi(text: string): string {
+  return text.replace(/\u001b\[[0-9;]*m/g, "");
+}
+
 const TranscriptMessage = memo(function TranscriptMessage({ event }: { event: Flat }) {
   const [reasoningOpen, setReasoningOpen] = useState(event.reasoning_open === 1);
   const thinking = typeof event.thinking === "string" ? event.thinking : "";
   const role = String(event.role || "system");
+  const isTool = role === "tool";
+  const content = isTool ? stripAnsi(String(event.content)) : undefined;
   return (
     <article className={`message message-${role}`}>
       <header>
@@ -66,7 +72,13 @@ const TranscriptMessage = memo(function TranscriptMessage({ event }: { event: Fl
           {reasoningOpen ? <div className="reasoning-content"><MarkdownContent compact>{thinking}</MarkdownContent></div> : null}
         </div>
       ) : null}
-      {event.content ? <div className="message-content"><MarkdownContent>{String(event.content)}</MarkdownContent></div> : null}
+      {content ? (
+        <div className="message-content message-content-pre">
+          <pre className="message-pre">{content}</pre>
+        </div>
+      ) : event.content ? (
+        <div className="message-content"><MarkdownContent>{String(event.content)}</MarkdownContent></div>
+      ) : null}
     </article>
   );
 });

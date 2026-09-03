@@ -115,7 +115,9 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .reasoning button { border: 0; background: transparent; color: var(--magenta); padding: 9px 14px; font-size: 13px; }
 .reasoning-content { padding: 4px 14px 13px 30px; color: var(--muted); font-size: 13px; }
 .message-content { padding: 14px 16px 17px; color: var(--text); font-size: 15px; line-height: 1.65; overflow-wrap: anywhere; }
+.message-content-pre { padding: 14px 16px 17px; color: var(--cyan); font-size: 13px; line-height: 1.55; }
 .message-tool .message-content { color: var(--cyan); }
+.message-pre { margin: 0; white-space: pre-wrap; word-break: break-all; font-family: inherit; font-size: inherit; color: inherit; }
 .markdown > :first-child { margin-top: 0; }
 .markdown > :last-child { margin-bottom: 0; }
 .markdown p { margin: 0 0 .85em; }
