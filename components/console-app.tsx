@@ -4,6 +4,7 @@ import { FormEvent, KeyboardEvent, memo, useCallback, useEffect, useRef, useStat
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icons";
+import { isTransientRpcError, readRpcJson } from "@/lib/client-rpc";
 
 const MarkdownContent = dynamic(
   () => import("@/components/markdown-content").then((module) => module.MarkdownContent),
@@ -14,10 +15,28 @@ type ServerSummary = { id: string; name: string };
 type Flat = Record<string, string | number | boolean | null>;
 type Approval = { id: string; command: string };
 
-async function readJson(response: Response) {
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.error || "Request failed");
-  return data;
+const EVENT_RECONNECT_ATTEMPTS = 8;
+
+function wait(milliseconds: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(new DOMException("Aborted", "AbortError"));
+      return;
+    }
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new DOMException("Aborted", "AbortError"));
+    };
+    const timer = window.setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, milliseconds);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === "AbortError";
 }
 
 function roleName(role: Flat["role"]) {
@@ -65,13 +84,18 @@ export function ConsoleApp() {
   const [prompt, setPrompt] = useState("");
   const [busy, setBusy] = useState(false);
   const [connecting, setConnecting] = useState(true);
+  const [sessionsLoading, setSessionsLoading] = useState(false);
   const [approval, setApproval] = useState<Approval | null>(null);
   const [mobileSessions, setMobileSessions] = useState(false);
   const [online, setOnline] = useState(true);
+  const initialServerId = useRef(serverId);
   const transcriptRef = useRef<HTMLDivElement>(null);
   const promptRef = useRef<HTMLTextAreaElement>(null);
+  const connectController = useRef<AbortController | null>(null);
   const pollController = useRef<AbortController | null>(null);
-  const canPrompt = Boolean(hello) && !busy && !approval;
+  const modelWarming = hello?.model_status === "warming";
+  const modelReady = Boolean(hello) && !modelWarming && hello?.model_status !== "error";
+  const canPrompt = modelReady && !busy && !approval;
   const displayStatus = online ? status : "Offline";
 
   const rpc = useCallback(async (id: string, body: Record<string, unknown>, signal?: AbortSignal) => {
@@ -81,56 +105,87 @@ export function ConsoleApp() {
       body: JSON.stringify(body),
       signal,
     });
-    return readJson(response);
+    return readRpcJson(response);
   }, []);
 
-  const refreshSessions = useCallback(async (id: string) => {
-    const list = await rpc(id, { action: "sessions.list" }) as Flat[];
+  const refreshSessions = useCallback(async (id: string, signal?: AbortSignal) => {
+    const list = await rpc(id, { action: "sessions.list" }, signal) as Flat[];
     setSessions(list);
     return list;
   }, [rpc]);
 
-  const loadSession = useCallback(async (id: string, targetId: string, select = false) => {
-    if (select) await rpc(id, { action: "session.select", id: targetId });
-    const transcript = await rpc(id, { action: "session.load", id: targetId }) as Flat[];
+  const loadSession = useCallback(async (id: string, targetId: string, select = false, signal?: AbortSignal) => {
+    if (select) await rpc(id, { action: "session.select", id: targetId }, signal);
+    const transcript = await rpc(id, { action: "session.load", id: targetId }, signal) as Flat[];
     setSessionId(targetId);
     setMessages(transcript);
     setMobileSessions(false);
-    if (select) await refreshSessions(id);
+    if (select) await refreshSessions(id, signal);
   }, [refreshSessions, rpc]);
 
   const connect = useCallback(async (id: string) => {
     pollController.current?.abort();
+    connectController.current?.abort();
+    const controller = new AbortController();
+    connectController.current = controller;
     setConnecting(true);
     setError("");
     setStatus("Connecting");
     setHello(null);
     setMessages([]);
     setSessions([]);
+    setSessionsLoading(false);
     setSessionId("");
     try {
-      const metadata = await rpc(id, { action: "hello" }) as Flat;
+      const metadata = await rpc(id, { action: "hello" }, controller.signal) as Flat;
       if (metadata.protocol !== 1) throw new Error("This server does not speak zcoder protocol 1");
       setHello(metadata);
-      if (metadata.model_status === "warming") {
-        setStatus("Warming up");
-        let model = metadata;
-        while (model.model_status === "warming") {
-          await new Promise((resolve) => setTimeout(resolve, 700));
-          model = await rpc(id, { action: "model.get" }) as Flat;
-        }
-        if (model.model_status === "error") throw new Error(String(model.model_error || "Model preparation failed"));
+      setConnecting(false);
+
+      if (metadata.model_status === "error") {
+        setStatus("Model error");
+        setError(String(metadata.model_error || "Model preparation failed"));
+      } else {
+        setStatus(metadata.model_status === "warming" ? "Warming up" : "Ready");
       }
-      setStatus(metadata.model_status === "error" ? "Model error" : "Ready");
+
       if (metadata.sessions === true) {
-        const list = await refreshSessions(id);
-        const current = list.find((session) => session.current === 1);
-        if (current && typeof current.id === "string") await loadSession(id, current.id);
+        setSessionsLoading(true);
+        void (async () => {
+          const list = await refreshSessions(id, controller.signal);
+          const current = list.find((session) => session.current === 1);
+          if (current && typeof current.id === "string") await loadSession(id, current.id, false, controller.signal);
+        })().catch((cause) => {
+          if (!isAbortError(cause)) setError(cause instanceof Error ? cause.message : "Could not load sessions");
+        }).finally(() => {
+          if (!controller.signal.aborted) setSessionsLoading(false);
+        });
+      }
+
+      if (metadata.model_status === "warming") {
+        void (async () => {
+          let model = metadata;
+          while (model.model_status === "warming") {
+            await wait(700, controller.signal);
+            model = await rpc(id, { action: "model.get" }, controller.signal) as Flat;
+          }
+          setHello((current) => current ? { ...current, ...model } : current);
+          if (model.model_status === "error") {
+            setStatus("Model error");
+            setError(String(model.model_error || "Model preparation failed"));
+          } else {
+            setStatus("Ready");
+          }
+        })().catch((cause) => {
+          if (isAbortError(cause)) return;
+          setStatus("Model error");
+          setError(cause instanceof Error ? cause.message : "Could not check model status");
+        });
       }
     } catch (cause) {
+      if (isAbortError(cause)) return;
       setError(cause instanceof Error ? cause.message : "Connection failed");
       setStatus("Offline");
-    } finally {
       setConnecting(false);
     }
   }, [loadSession, refreshSessions, rpc]);
@@ -138,12 +193,12 @@ export function ConsoleApp() {
   useEffect(() => {
     let cancelled = false;
     fetch("/api/servers", { cache: "no-store" })
-      .then(readJson)
+      .then((response) => readRpcJson<ServerSummary[]>(response))
       .then((list: ServerSummary[]) => {
         if (cancelled) return;
         setServers(list);
         if (list[0]) {
-          const initialId = serverId || list[0].id;
+          const initialId = initialServerId.current || list[0].id;
           setServerId(initialId);
           sessionStorage.setItem("zcoder-server-id", initialId);
           void connect(initialId);
@@ -158,7 +213,11 @@ export function ConsoleApp() {
           setConnecting(false);
         }
       });
-    return () => { cancelled = true; pollController.current?.abort(); };
+    return () => {
+      cancelled = true;
+      connectController.current?.abort();
+      pollController.current?.abort();
+    };
   }, [connect]);
 
   useEffect(() => {
@@ -227,14 +286,26 @@ export function ConsoleApp() {
     const controller = new AbortController();
     pollController.current = controller;
     let cursor = 0;
+    let reconnectAttempts = 0;
     try {
       while (!controller.signal.aborted) {
-        const event = await rpc(id, { action: "events.next", after: cursor }, controller.signal) as Flat;
+        let event: Flat;
+        try {
+          event = await rpc(id, { action: "events.next", after: cursor }, controller.signal) as Flat;
+          if (reconnectAttempts > 0) {
+            reconnectAttempts = 0;
+            setStatus("Working");
+          }
+        } catch (cause) {
+          if (isAbortError(cause)) throw cause;
+          if (!isTransientRpcError(cause) || reconnectAttempts >= EVENT_RECONNECT_ATTEMPTS) throw cause;
+          reconnectAttempts += 1;
+          setStatus("Reconnecting");
+          await wait(Math.min(250 * reconnectAttempts, 1_500), controller.signal);
+          continue;
+        }
         if (event.event === "none") {
-          await new Promise<void>((resolve, reject) => {
-            const timer = window.setTimeout(resolve, 550);
-            controller.signal.addEventListener("abort", () => { clearTimeout(timer); reject(new DOMException("Aborted", "AbortError")); }, { once: true });
-          });
+          await wait(550, controller.signal);
           continue;
         }
         if (typeof event.seq === "number") cursor = event.seq;
@@ -253,7 +324,7 @@ export function ConsoleApp() {
         }
       }
     } catch (cause) {
-      if (cause instanceof DOMException && cause.name === "AbortError") return;
+      if (isAbortError(cause)) return;
       setError(cause instanceof Error ? cause.message : "Event stream failed");
       setBusy(false);
       setStatus("Connection lost");
@@ -357,7 +428,7 @@ export function ConsoleApp() {
         <button type="button" className={`session-backdrop ${mobileSessions ? "visible" : ""}`} aria-label="Close sessions" tabIndex={mobileSessions ? 0 : -1} onClick={() => setMobileSessions(false)} />
         <aside id="session-drawer" className={`session-pane ${mobileSessions ? "mobile-open" : ""}`} aria-label="Remote sessions">
           <div className="pane-title"><span>Sessions</span><b>{String(sessions.length).padStart(2, "0")}</b><button type="button" className="drawer-close" aria-label="Close sessions" onClick={() => setMobileSessions(false)}>×</button></div>
-          <button type="button" className="new-session" disabled={busy || !hello} onClick={createSession}><Icon name="plus" /> New session</button>
+          <button type="button" className="new-session" disabled={busy || sessionsLoading || !hello} onClick={createSession}><Icon name="plus" /> New session</button>
           <nav aria-label="Remote sessions">
             {sessions.map((session) => {
               const id = String(session.id);
@@ -369,7 +440,7 @@ export function ConsoleApp() {
                 </button>
               );
             })}
-            {!sessions.length && !connecting ? <p className="empty-list">No sessions on this server.</p> : null}
+            {sessionsLoading ? <p className="empty-list">Loading sessions…</p> : !sessions.length && !connecting ? <p className="empty-list">No sessions on this server.</p> : null}
           </nav>
           {hello ? (
             <dl className="server-facts">
@@ -388,7 +459,13 @@ export function ConsoleApp() {
             {!connecting && !hello ? (
               <div className="empty-state"><Icon name="server" size={28} /><h2>{servers.length ? "Server unavailable" : "No servers configured"}</h2><p>{servers.length ? "Check the tunnel, zcoder process, and token." : "Add ZCODER_SERVERS_JSON to .env, then restart zweb."}</p>{error ? <code>{error}</code> : null}{servers.length && serverId ? <button type="button" className="retry-button" onClick={() => void connect(serverId)}>Reconnect</button> : null}</div>
             ) : null}
-            {!connecting && hello && !messages.length ? <div className="empty-state ready-empty"><span className="prompt-symbol">›_</span><h2>Ready for a job</h2><p>Start a new turn in the selected server session.</p></div> : null}
+            {!connecting && hello && !messages.length ? (
+              <div className="empty-state ready-empty">
+                <span className="prompt-symbol">›_</span>
+                <h2>{modelReady ? "Ready for a job" : modelWarming ? "Model warming up" : "Model unavailable"}</h2>
+                <p>{modelReady ? "Start a new turn in the selected server session." : modelWarming ? "Sessions remain available while the model prepares." : "Sessions remain available while the model is unavailable."}</p>
+              </div>
+            ) : null}
             {messages.map((message, index) => <TranscriptMessage key={`${String(message.seq ?? "local")}-${index}`} event={message} />)}
           </div>
           {error && hello ? <div className="error-strip" role="alert"><strong>!</strong><span>{error}</span><button type="button" onClick={() => setError("")} aria-label="Dismiss error">×</button></div> : null}
@@ -400,7 +477,7 @@ export function ConsoleApp() {
           ) : null}
           <form className="prompt-box" onSubmit={submitPrompt}>
             <label htmlFor="prompt">Prompt <small>Enter sends · Shift+Enter newline</small></label>
-            <div className="prompt-row"><span aria-hidden="true">›</span><textarea ref={promptRef} id="prompt" value={prompt} onChange={(event) => setPrompt(event.target.value)} onKeyDown={promptKeyDown} disabled={!canPrompt} rows={1} autoFocus placeholder={busy ? "Agent is working…" : "Describe the job"} /><button type={busy ? "button" : "submit"} onClick={busy ? cancelTurn : undefined} disabled={!hello || (!busy && !prompt.trim())} className={busy ? "stop-button" : "send-button"}>{busy ? <><Icon name="stop" /> Stop</> : <><Icon name="send" /> Send</>}</button></div>
+            <div className="prompt-row"><span aria-hidden="true">›</span><textarea ref={promptRef} id="prompt" value={prompt} onChange={(event) => setPrompt(event.target.value)} onKeyDown={promptKeyDown} disabled={!canPrompt} rows={1} autoFocus placeholder={busy ? "Agent is working…" : modelReady ? "Describe the job" : modelWarming ? "Model is warming up…" : "Model unavailable"} /><button type={busy ? "button" : "submit"} onClick={busy ? cancelTurn : undefined} disabled={!hello || !modelReady || (!busy && !prompt.trim())} className={busy ? "stop-button" : "send-button"}>{busy ? <><Icon name="stop" /> Stop</> : <><Icon name="send" /> Send</>}</button></div>
           </form>
         </section>
       </div>

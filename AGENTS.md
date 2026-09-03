@@ -13,7 +13,7 @@ Goal of this project is to create a lean and fast application.
 
 ## Push and deploy
 
-When I tell you to push and deploy, you push to git, then `ssh` to `fidelity`, cd to `/shared/sites/stig/zweb` and run the script `./scripts/pm2-restart.sh`. This script pulls from git and rebuilds the project, then restarts the `pm2` process. You can also run `./scripts/pm2-restart.sh --rebuild` to only rebuild without pulling from git.
+When I tell you to push and deploy, you push to git, then `ssh` to `fidelity` and use `zsh -cli` to run the scripts successfully, cd to `/shared/sites/stig/zweb` and run the script `./scripts/pm2-restart.sh`. This script pulls from git and rebuilds the project, then restarts the `pm2` process. You can also run `./scripts/pm2-restart.sh --rebuild` to only rebuild without pulling from git.
 
 # Atlas Scout
 
