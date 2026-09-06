@@ -488,8 +488,7 @@ export function ConsoleApp() {
             </section>
           ) : null}
           <form className="prompt-box" onSubmit={submitPrompt}>
-            <label htmlFor="prompt">Prompt <small>Enter sends · Shift+Enter newline</small></label>
-            <div className="prompt-row"><span aria-hidden="true">›</span><textarea ref={promptRef} id="prompt" value={prompt} onChange={(event) => setPrompt(event.target.value)} onKeyDown={promptKeyDown} disabled={!canPrompt} rows={1} autoFocus placeholder={busy ? "Agent is working…" : modelReady ? "Describe the job" : modelWarming ? "Model is warming up…" : "Model unavailable"} /><button type={busy ? "button" : "submit"} onClick={busy ? cancelTurn : undefined} disabled={!hello || !modelReady || (!busy && !prompt.trim())} className={busy ? "stop-button" : "send-button"}>{busy ? <><Icon name="stop" /> Stop</> : <><Icon name="send" /> Send</>}</button></div>
+            <div className="prompt-row"><span aria-hidden="true">›</span><textarea ref={promptRef} id="prompt" value={prompt} onChange={(event) => setPrompt(event.target.value)} onKeyDown={promptKeyDown} disabled={!canPrompt} rows={1} autoFocus enterKeyHint="send" placeholder={busy ? "Agent is working…" : modelReady ? "Describe the job" : modelWarming ? "Model is warming up…" : "Model unavailable"} /><button type={busy ? "button" : "submit"} onClick={busy ? cancelTurn : undefined} disabled={!hello || !modelReady || (!busy && !prompt.trim())} className={busy ? "stop-button" : "send-button"}>{busy ? <><Icon name="stop" /> Stop</> : <><Icon name="send" /> Send</>}</button></div>
           </form>
         </section>
       </div>
