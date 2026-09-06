@@ -234,7 +234,8 @@ export function ConsoleApp() {
 
   useEffect(() => {
     const element = transcriptRef.current;
-    if (element) element.scrollTop = element.scrollHeight;
+    if (!element) return;
+    requestAnimationFrame(() => { element.scrollTop = element.scrollHeight; });
   }, [messages, approval]);
 
   useEffect(() => {
