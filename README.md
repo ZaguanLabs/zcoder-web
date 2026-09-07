@@ -11,9 +11,9 @@ The browser never connects to zcoder directly. It talks only to this Next.js app
 Requirements: Node.js 20.9 or newer and a reachable zcoder server (preferably through an SSH tunnel or private VPN).
 
 ```bash
-npm install
+pnpm install
 cp .env.example .env.local
-npm run auth:hash
+pnpm auth:hash
 ```
 
 Paste the complete `APP_PASSWORD_HASH=...` output into `.env.local`. Generate the session secret:
@@ -41,14 +41,14 @@ Server IDs may contain lowercase letters, numbers, `_`, and `-`. Tokens must fol
 Run locally:
 
 ```bash
-npm run dev
+pnpm dev
 ```
 
 For production:
 
 ```bash
-npm run build
-npm start -- -H 127.0.0.1 -p 3000
+pnpm build
+pnpm start -H 127.0.0.1 -p 3000
 ```
 
 Terminate TLS in a trusted reverse proxy in front of `127.0.0.1:3000`. Production cookies are `Secure`, so the public app must use HTTPS.
@@ -65,6 +65,18 @@ The service worker is deliberately conservative because zweb handles private sys
 - Service-worker registration is production-only. Installation requires HTTPS, except during browser-supported localhost development.
 
 After changing the manifest, icons, or service worker, run a new production build and reload the installed app while online so it can update.
+
+## Steering and follow-ups
+
+With zcoder.zsh 0.12.0 or later advertising `input_queue: true`, the composer stays available during a run. Choose **Steering** to add guidance after the current model response and its tools, or **Follow-up** to queue another task after the current task finishes. Both use the existing run and event stream, including command approvals.
+
+Queued cards show **Pending**, **Paused**, **Added to history**, **Discarded**, or **Unconfirmed**. Added to history means the input was consumed; it does not mean the model has answered it. Unconfirmed submissions retain their exact request and offer **Retry exact submission**. A rejected or malformed response leaves the draft available.
+
+The browser saves queued requests and receipt states in local storage, scoped by configured server ID and session ID, before sending. These records include message text so retries can preserve exact bytes. They survive reloads; terminal cards can be dismissed to remove their local records. They are separate from the server-owned transcript and from service-worker caching. If browser storage is unavailable or full, new queue submissions are blocked before posting.
+
+On reconnect, zweb loads the selected session, reconciles saved message IDs through `/v1/input/status`, and obtains the accepting run from `/v1/input/list`. The server listing is displayed as text: it cannot safely be parsed into individual messages, and user-message events do not contain IDs. Clearing browser storage loses per-message controls for those submissions; the listing and session-wide recovery remain available.
+
+Stopping a run preserves unconsumed input. While idle in its original session, use **Resume pending input** to explicitly select that session and start `/queue resume`, or **Discard** a known pending card. Discard races are reconciled by status; they never claim to undo consumed input. Older servers keep active-run input as an unsent draft until a normal turn can start.
 
 ## Connecting zcoder safely
 
@@ -95,8 +107,8 @@ The zcoder bearer token remains a server-wide capability. Anyone who obtains eit
 ## Commands
 
 ```bash
-npm run lint
-npm test
-npm run build
-npm run auth:hash
+pnpm lint
+pnpm test
+pnpm build
+pnpm auth:hash
 ```

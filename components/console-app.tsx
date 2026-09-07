@@ -5,6 +5,7 @@ import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icons";
 import { isTransientRpcError, readRpcJson } from "@/lib/client-rpc";
+import { emptyQueue, InputQueue, type InputMode, type QueueSnapshot } from "@/lib/input-queue";
 
 const MarkdownContent = dynamic(
   () => import("@/components/markdown-content").then((module) => module.MarkdownContent),
@@ -86,7 +87,7 @@ const TranscriptMessage = memo(function TranscriptMessage({ event }: { event: Fl
 export function ConsoleApp() {
   const router = useRouter();
   const [servers, setServers] = useState<ServerSummary[]>([]);
-  const [serverId, setServerId] = useState(() => sessionStorage.getItem("zcoder-server-id") ?? "");
+  const [serverId, setServerId] = useState(() => typeof window === "undefined" ? "" : sessionStorage.getItem("zcoder-server-id") ?? "");
   const [hello, setHello] = useState<Flat | null>(null);
   const [sessions, setSessions] = useState<Flat[]>([]);
   const [sessionId, setSessionId] = useState("");
@@ -100,6 +101,13 @@ export function ConsoleApp() {
   const [approval, setApproval] = useState<Approval | null>(null);
   const [mobileSessions, setMobileSessions] = useState(false);
   const [online, setOnline] = useState(true);
+  const [runId, setRunId] = useState("");
+  const [queue, setQueue] = useState<QueueSnapshot>(emptyQueue);
+  const [inputMode, setInputMode] = useState<InputMode>("steer");
+  const [inputSending, setInputSending] = useState(false);
+  const queueClient = useRef<InputQueue | null>(null);
+  const submissionLock = useRef(false);
+  const preparingController = useRef<AbortController | null>(null);
   const initialServerId = useRef(serverId);
   const transcriptRef = useRef<HTMLDivElement>(null);
   const promptRef = useRef<HTMLTextAreaElement>(null);
@@ -107,7 +115,12 @@ export function ConsoleApp() {
   const pollController = useRef<AbortController | null>(null);
   const modelWarming = hello?.model_status === "warming";
   const modelReady = Boolean(hello) && !modelWarming && hello?.model_status !== "error";
-  const canPrompt = modelReady && !busy && !approval;
+  const queueSupported = hello?.input_queue === true && hello?.sessions === true;
+  const canPrompt = Boolean(hello) && !connecting;
+  const canQueue = busy && queueSupported && Boolean(runId) && queue.turnId === runId && !queue.loading && !queue.error;
+  const hasUncertainInput = queue.records.some((record) => record.state === "uncertain");
+  const canSend = online && !sessionsLoading && !inputSending && !hasUncertainInput &&
+    (busy ? canQueue : modelReady && !approval && (!queueSupported || Boolean(sessionId) && !queue.loading && !queue.error));
   const displayStatus = online ? status : "Offline";
 
   const rpc = useCallback(async (id: string, body: Record<string, unknown>, signal?: AbortSignal) => {
@@ -127,19 +140,108 @@ export function ConsoleApp() {
   }, [rpc]);
 
   const loadSession = useCallback(async (id: string, targetId: string, select = false, signal?: AbortSignal) => {
-    if (select) await rpc(id, { action: "session.select", id: targetId }, signal);
-    const transcript = await rpc(id, { action: "session.load", id: targetId }, signal) as Flat[];
-    setSessionId(targetId);
-    setMessages(transcript);
-    setMobileSessions(false);
-    if (select) await refreshSessions(id, signal);
+    if (select) setSessionsLoading(true);
+    try {
+      if (select) {
+        await rpc(id, { action: "session.select", id: targetId }, signal);
+        setSessionId(targetId);
+        setQueue(emptyQueue);
+        setMessages([]);
+      }
+      const transcript = await rpc(id, { action: "session.load", id: targetId }, signal) as Flat[];
+      setSessionId(targetId);
+      setMessages(transcript);
+      setMobileSessions(false);
+      if (select) await refreshSessions(id, signal);
+    } finally { if (select) setSessionsLoading(false); }
+  }, [refreshSessions, rpc]);
+
+  const pollEvents = useCallback(async (id: string, targetSession: string, supportsSessions: boolean, turnId: string, reattached = false) => {
+    pollController.current?.abort();
+    const controller = new AbortController();
+    pollController.current = controller;
+    let cursor = 0;
+    let reconnectAttempts = 0;
+    let transcriptDirty = false;
+    const reloadTranscript = async () => {
+      if (!transcriptDirty || !targetSession) return;
+      const transcript = await rpc(id, { action: "session.load", id: targetSession }, controller.signal) as Flat[];
+      if (!controller.signal.aborted) setMessages(transcript);
+      transcriptDirty = false;
+    };
+    try {
+      while (!controller.signal.aborted) {
+        let event: Flat;
+        try {
+          event = await rpc(id, { action: "events.next", after: cursor }, controller.signal) as Flat;
+          if (reconnectAttempts > 0) { reconnectAttempts = 0; setStatus("Working"); }
+        } catch (cause) {
+          if (isAbortError(cause)) throw cause;
+          if (!isTransientRpcError(cause) || reconnectAttempts >= EVENT_RECONNECT_ATTEMPTS) throw cause;
+          reconnectAttempts += 1;
+          setStatus("Reconnecting");
+          await wait(Math.min(250 * reconnectAttempts, 1_500), controller.signal);
+          continue;
+        }
+        if (!event || typeof event !== "object") throw new Error("Malformed remote event");
+        if (event.event === "none") {
+          await reloadTranscript();
+          await wait(550, controller.signal);
+          continue;
+        }
+        if (!Number.isSafeInteger(event.seq) || (event.seq as number) <= cursor) throw new Error("Remote event cursor did not advance");
+        cursor = event.seq as number;
+        switch (event.event) {
+          case "message":
+            if (typeof event.role !== "string" || typeof event.content !== "string" || typeof event.thinking !== "string") throw new Error("Malformed remote message");
+            // On reattach, the saved transcript already contains streamed messages.
+            // Reload that authoritative transcript without matching message text.
+            if (reattached) transcriptDirty = true;
+            else setMessages((current) => [...current, event]);
+            break;
+          case "status":
+            if (typeof event.status !== "string") throw new Error("Malformed remote status");
+            setStatus(event.status);
+            break;
+          case "approval_required":
+            if (typeof event.id !== "string" || !event.id || typeof event.command !== "string") throw new Error("Malformed remote approval");
+            setApproval({ id: event.id, command: event.command });
+            setStatus("Approval required");
+            break;
+          case "complete": {
+            const code = Number.isInteger(event.exit_code) && (event.exit_code as number) >= 0 && (event.exit_code as number) <= 255 ? event.exit_code : 1;
+            setRunId("");
+            setApproval(null);
+            queueClient.current?.closeRun(turnId);
+            await reloadTranscript();
+            await queueClient.current?.refresh();
+            if (supportsSessions) await refreshSessions(id, controller.signal);
+            setBusy(false);
+            setStatus(code === 0 ? "Ready" : code === 130 ? "Stopped" : `Exited ${code}`);
+            return;
+          }
+          default: throw new Error("Unknown remote event type");
+        }
+      }
+    } catch (cause) {
+      if (isAbortError(cause)) return;
+      setError(cause instanceof Error ? cause.message : "Event stream failed");
+      setBusy(false);
+      setStatus("Connection lost");
+    } finally {
+      if (pollController.current === controller) pollController.current = null;
+    }
   }, [refreshSessions, rpc]);
 
   const connect = useCallback(async (id: string) => {
     pollController.current?.abort();
+    preparingController.current?.abort();
     connectController.current?.abort();
     const controller = new AbortController();
     connectController.current = controller;
+    setBusy(false);
+    setRunId("");
+    setApproval(null);
     setConnecting(true);
     setError("");
     setStatus("Connecting");
@@ -148,6 +250,7 @@ export function ConsoleApp() {
     setSessions([]);
     setSessionsLoading(false);
     setSessionId("");
+    setQueue(emptyQueue);
     try {
       const metadata = await rpc(id, { action: "hello" }, controller.signal) as Flat;
       if (metadata.protocol !== 1) throw new Error("This server does not speak zcoder protocol 1");
@@ -185,7 +288,7 @@ export function ConsoleApp() {
           if (model.model_status === "error") {
             setStatus("Model error");
             setError(String(model.model_error || "Model preparation failed"));
-          } else {
+          } else if (!pollController.current) {
             setStatus("Ready");
           }
         })().catch((cause) => {
@@ -201,6 +304,41 @@ export function ConsoleApp() {
       setConnecting(false);
     }
   }, [loadSession, refreshSessions, rpc]);
+
+  useEffect(() => {
+    if (!queueSupported || !serverId || !sessionId) return;
+    let disposed = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const controller = new AbortController();
+    let client: InputQueue;
+    try {
+      client = new InputQueue(sessionId, serverId, (body) => rpc(serverId, body, controller.signal), localStorage,
+        (snapshot) => { if (!disposed) setQueue(snapshot); });
+      queueClient.current = client;
+    } catch (cause) {
+      queueMicrotask(() => { if (!disposed) setQueue({ ...emptyQueue, error: cause instanceof Error ? cause.message : "Could not restore queued input" }); });
+      return () => { disposed = true; };
+    }
+    const inspect = async (initial = false) => {
+      await client.refresh();
+      if (disposed) return;
+      if (initial && client.snapshot.turnId && !pollController.current) {
+        setRunId(client.snapshot.turnId);
+        setBusy(true);
+        setStatus("Working");
+        void pollEvents(serverId, sessionId, true, client.snapshot.turnId, true);
+      }
+      const pending = client.snapshot.records.some((record) => ["accepted", "uncertain"].includes(record.state));
+      timer = setTimeout(() => void inspect(), client.snapshot.turnId || pending ? 2_000 : 10_000);
+    };
+    void inspect(true);
+    return () => {
+      disposed = true;
+      controller.abort();
+      clearTimeout(timer);
+      if (queueClient.current === client) queueClient.current = null;
+    };
+  }, [queueSupported, serverId, sessionId, rpc, pollEvents]);
 
   useEffect(() => {
     let cancelled = false;
@@ -229,6 +367,7 @@ export function ConsoleApp() {
       cancelled = true;
       connectController.current?.abort();
       pollController.current?.abort();
+      preparingController.current?.abort();
     };
   }, [connect]);
 
@@ -286,6 +425,7 @@ export function ConsoleApp() {
     function stopOnEscape(event: globalThis.KeyboardEvent) {
       if (event.key !== "Escape") return;
       event.preventDefault();
+      if (preparingController.current) { preparingController.current.abort(); return; }
       setStatus("Stopping");
       void rpc(serverId, { action: "cancel" }).catch((cause) => {
         setError(cause instanceof Error ? cause.message : "Cancellation was not acknowledged");
@@ -295,92 +435,76 @@ export function ConsoleApp() {
     return () => window.removeEventListener("keydown", stopOnEscape);
   }, [busy, rpc, serverId]);
 
-  async function pollEvents(id: string) {
+  async function startTurn(value: string, resume = false) {
+    if (!serverId || busy || submissionLock.current) return;
+    submissionLock.current = true;
+    setError("");
+    setBusy(true);
+    setStatus("Checking model");
     const controller = new AbortController();
-    pollController.current = controller;
-    let cursor = 0;
-    let reconnectAttempts = 0;
+    preparingController.current = controller;
     try {
-      while (!controller.signal.aborted) {
-        let event: Flat;
-        try {
-          event = await rpc(id, { action: "events.next", after: cursor }, controller.signal) as Flat;
-          if (reconnectAttempts > 0) {
-            reconnectAttempts = 0;
-            setStatus("Working");
-          }
-        } catch (cause) {
-          if (isAbortError(cause)) throw cause;
-          if (!isTransientRpcError(cause) || reconnectAttempts >= EVENT_RECONNECT_ATTEMPTS) throw cause;
-          reconnectAttempts += 1;
-          setStatus("Reconnecting");
-          await wait(Math.min(250 * reconnectAttempts, 1_500), controller.signal);
-          continue;
+      if (resume) await rpc(serverId, { action: "session.select", id: sessionId }, controller.signal);
+      let model: Flat = hello ?? {};
+      if (hello?.model_status !== undefined) {
+        model = await rpc(serverId, { action: "model.ensure" }, controller.signal) as Flat;
+        while (model.model_status === "warming") {
+          setStatus("Warming up");
+          await wait(700, controller.signal);
+          model = await rpc(serverId, { action: "model.get" }, controller.signal) as Flat;
         }
-        if (event.event === "none") {
-          await wait(550, controller.signal);
-          continue;
-        }
-        if (typeof event.seq === "number") cursor = event.seq;
-        if (event.event === "message") setMessages((current) => [...current, event]);
-        if (event.event === "status") setStatus(String(event.status || "Working"));
-        if (event.event === "approval_required") {
-          setApproval({ id: String(event.id), command: String(event.command) });
-          setStatus("Approval required");
-        }
-        if (event.event === "complete") {
-          setBusy(false);
-          setApproval(null);
-          setStatus(event.exit_code === 0 ? "Ready" : event.exit_code === 130 ? "Stopped" : `Exited ${event.exit_code}`);
-          await refreshSessions(id).catch(() => undefined);
-          return;
-        }
+        if (model.model_status !== "ready") throw new Error(String(model.model_error || "Model preparation failed"));
       }
+      if (controller.signal.aborted) throw new DOMException("Aborted", "AbortError");
+      preparingController.current = null;
+      setStatus("Starting turn");
+      const receipt = await rpc(serverId, { action: "turn.start", prompt: value }) as Flat;
+      if (typeof receipt.turn_id !== "string" || !receipt.turn_id) throw new Error("Server returned an invalid turn receipt; reconnect to inspect the run before retrying");
+      setRunId(receipt.turn_id);
+      if (!resume) {
+        setMessages((current) => [...current, { event: "message", role: "user", content: value, thinking: "", time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) }]);
+        setPrompt((current) => current === value ? "" : current);
+      }
+      setStatus(receipt.model_status === "warming" ? "Warming up" : "Working");
+      void queueClient.current?.refresh();
+      void pollEvents(serverId, sessionId, hello?.sessions === true, receipt.turn_id);
     } catch (cause) {
-      if (isAbortError(cause)) return;
-      setError(cause instanceof Error ? cause.message : "Event stream failed");
+      if (!isAbortError(cause)) setError(cause instanceof Error ? cause.message : "Could not start the turn");
       setBusy(false);
-      setStatus("Connection lost");
+      setStatus(isAbortError(cause) ? "Stopped" : "Check connection");
+    } finally {
+      preparingController.current = null;
+      submissionLock.current = false;
     }
   }
 
   async function submitPrompt(event: FormEvent) {
     event.preventDefault();
-    const value = prompt.trim();
-    if (!value || !serverId || busy) return;
-    setError("");
-    setBusy(true);
-    setStatus("Checking model");
-    setMessages((current) => [...current, { event: "message", role: "user", content: value, thinking: "", time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) }]);
-    setPrompt("");
+    if (!prompt || !canSend) return;
+    if (!busy) { await startTurn(prompt); return; }
+    if (!canQueue || !queueClient.current || submissionLock.current) return;
+    submissionLock.current = true;
+    setInputSending(true);
+    const value = prompt;
+    const client = queueClient.current;
     try {
-      let model = await rpc(serverId, { action: "model.ensure" }) as Flat;
-      while (model.model_status === "warming") {
-        setStatus("Warming up");
-        await new Promise((resolve) => setTimeout(resolve, 700));
-        model = await rpc(serverId, { action: "model.get" }) as Flat;
-      }
-      if (model.model_status === "error") throw new Error(String(model.model_error || "Model preparation failed"));
-      setStatus("Starting turn");
-      await rpc(serverId, { action: "turn.start", prompt: value });
-      setStatus("Working");
-      void pollEvents(serverId);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not start the turn");
-      setBusy(false);
-      setStatus("Ready");
-    }
+      const accepted = await client.submit(runId, inputMode, value);
+      if (accepted && queueClient.current === client) setPrompt((current) => current === value ? "" : current);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not save queued input"); }
+    finally { submissionLock.current = false; setInputSending(false); }
   }
 
   async function createSession() {
-    if (!serverId || busy) return;
+    if (!serverId || busy || sessionsLoading || inputSending || hello?.sessions !== true) return;
     setError("");
+    setSessionsLoading(true);
     try {
       const result = await rpc(serverId, { action: "session.new" }) as Flat;
       if (typeof result.id !== "string") throw new Error("Server returned an invalid session id");
       await refreshSessions(serverId);
       await loadSession(serverId, result.id);
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not create a session"); }
+    finally { setSessionsLoading(false); }
   }
 
   async function answerApproval(decision: "y" | "a" | "n") {
@@ -389,11 +513,21 @@ export function ConsoleApp() {
       await rpc(serverId, { action: "approval", id: approval.id, decision });
       setApproval(null);
       setStatus(decision === "n" ? "Command denied" : "Working");
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "Approval failed"); }
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Approval failed");
+      await rpc(serverId, { action: "cancel" }).catch(() => undefined);
+      pollController.current?.abort();
+      setBusy(false);
+      setRunId("");
+      setApproval(null);
+      setStatus("Approval failed");
+      await queueClient.current?.refresh();
+    }
   }
 
   async function cancelTurn() {
     if (!serverId || !busy) return;
+    if (preparingController.current) { preparingController.current.abort(); return; }
     setStatus("Stopping");
     try { await rpc(serverId, { action: "cancel" }); } catch (cause) { setError(cause instanceof Error ? cause.message : "Cancellation was not acknowledged"); }
   }
@@ -417,7 +551,7 @@ export function ConsoleApp() {
         <div className="wordmark"><span><Icon name="bolt" size={17} /></span> zweb <small>/ remote zcoder</small></div>
         <div className="server-switcher">
           <label htmlFor="server-select">Server</label>
-          <select id="server-select" value={serverId} disabled={busy} onChange={(event) => { const id = event.target.value; sessionStorage.setItem("zcoder-server-id", id); setServerId(id); void connect(id); }}>
+          <select id="server-select" value={serverId} disabled={busy || inputSending || sessionsLoading} onChange={(event) => { const id = event.target.value; sessionStorage.setItem("zcoder-server-id", id); setServerId(id); void connect(id); }}>
             {servers.map((server) => <option key={server.id} value={server.id}>{server.name}</option>)}
           </select>
         </div>
@@ -431,7 +565,7 @@ export function ConsoleApp() {
         </button>
         <label className="mobile-server-switcher">
           <span className="sr-only">Server</span>
-          <select value={serverId} aria-label="Active server" disabled={busy} onChange={(event) => { const id = event.target.value; sessionStorage.setItem("zcoder-server-id", id); setMobileSessions(false); setServerId(id); void connect(id); }}>
+          <select value={serverId} aria-label="Active server" disabled={busy || inputSending || sessionsLoading} onChange={(event) => { const id = event.target.value; sessionStorage.setItem("zcoder-server-id", id); setMobileSessions(false); setServerId(id); void connect(id); }}>
             {servers.map((server) => <option key={server.id} value={server.id}>{server.name}</option>)}
           </select>
         </label>
@@ -441,12 +575,12 @@ export function ConsoleApp() {
         <button type="button" className={`session-backdrop ${mobileSessions ? "visible" : ""}`} aria-label="Close sessions" tabIndex={mobileSessions ? 0 : -1} onClick={() => setMobileSessions(false)} />
         <aside id="session-drawer" className={`session-pane ${mobileSessions ? "mobile-open" : ""}`} aria-label="Remote sessions">
           <div className="pane-title"><span>Sessions</span><b>{String(sessions.length).padStart(2, "0")}</b><button type="button" className="drawer-close" aria-label="Close sessions" onClick={() => setMobileSessions(false)}>×</button></div>
-          <button type="button" className="new-session" disabled={busy || sessionsLoading || !hello} onClick={createSession}><Icon name="plus" /> New session</button>
+          <button type="button" className="new-session" disabled={busy || inputSending || sessionsLoading || hello?.sessions !== true} onClick={createSession}><Icon name="plus" /> New session</button>
           <nav aria-label="Remote sessions">
             {sessions.map((session) => {
               const id = String(session.id);
               return (
-                <button type="button" key={id} className={sessionId === id ? "active" : ""} disabled={busy} onClick={() => void loadSession(serverId, id, true)}>
+                <button type="button" key={id} className={sessionId === id ? "active" : ""} disabled={busy || inputSending || sessionsLoading} onClick={() => void loadSession(serverId, id, true).catch((cause) => setError(cause instanceof Error ? cause.message : "Could not select session"))}>
                   <span className="session-rail" />
                   <span className="session-text"><strong>{String(session.title || "Untitled session")}</strong><small>{String(session.model || "Model unknown")}</small></span>
                   <Icon name="chevron" size={13} />
@@ -481,15 +615,53 @@ export function ConsoleApp() {
             ) : null}
             {messages.map((message, index) => <TranscriptMessage key={`${String(message.seq ?? "local")}-${index}`} event={message} />)}
           </div>
-          {error && hello ? <div className="error-strip" role="alert"><strong>!</strong><span>{error}</span><button type="button" onClick={() => setError("")} aria-label="Dismiss error">×</button></div> : null}
+          {error && hello ? <div className="error-strip" role="alert"><strong>!</strong><span>{error} <button type="button" onClick={() => void connect(serverId)}>Reconnect</button></span><button type="button" onClick={() => setError("")} aria-label="Dismiss error">×</button></div> : null}
           {approval ? (
             <section className="approval-bar" aria-labelledby="approval-title">
               <div><p id="approval-title"><span>!</span> Command approval required</p><code>{approval.command}</code></div>
-              <div className="approval-actions"><button type="button" className="deny" onClick={() => void answerApproval("n")}>Deny</button><button type="button" onClick={() => void answerApproval("y")}>Allow once</button><button type="button" className="allow" onClick={() => void answerApproval("a")}>Allow until restart</button></div>
+              <div className="approval-actions"><button type="button" className="deny" onClick={() => void answerApproval("n")}>Deny</button><button type="button" onClick={() => void answerApproval("y")}>Allow once</button>{hello?.profile === "coding" ? <button type="button" className="allow" onClick={() => void answerApproval("a")}>Allow until restart</button> : null}</div>
             </section>
           ) : null}
           <form className="prompt-box" onSubmit={submitPrompt}>
-            <div className="prompt-row"><span aria-hidden="true">›</span><textarea ref={promptRef} id="prompt" value={prompt} onChange={(event) => setPrompt(event.target.value)} onKeyDown={promptKeyDown} disabled={!canPrompt} rows={1} autoFocus enterKeyHint="send" placeholder={busy ? "Agent is working…" : modelReady ? "Describe the job" : modelWarming ? "Model is warming up…" : "Model unavailable"} /><button type={busy ? "button" : "submit"} onClick={busy ? cancelTurn : undefined} disabled={!hello || !modelReady || (!busy && !prompt.trim())} className={busy ? "stop-button" : "send-button"}>{busy ? <><Icon name="stop" /> Stop</> : <><Icon name="send" /> Send</>}</button></div>
+            {queueSupported && sessionId ? (
+              <details className="queue-panel" open={queue.records.some((record) => ["uncertain", "accepted"].includes(record.state)) || Boolean(queue.pending) || Boolean(queue.error)}>
+                <summary>Queued input · {queue.records.filter((record) => record.state === "accepted").length} pending from this browser</summary>
+                {queue.error ? <p role="alert">{queue.error}</p> : null}
+                <div className="queue-records">
+                  {queue.records.map((record) => (
+                    <article className="queue-card" key={record.request.message_id}>
+                      <header><strong>{record.request.mode === "steer" ? "Steering" : "Follow-up"}</strong><span>{record.state === "uncertain" ? "Unconfirmed" : record.state === "accepted" ? (queue.turnId ? "Pending" : "Paused") : record.state === "consumed" ? "Added to history" : record.state === "discarded" ? "Discarded" : "Rejected"}</span></header>
+                      <pre>{record.request.text}</pre>
+                      {record.error ? <p role="alert">{record.error}</p> : null}
+                      <div className="queue-actions">
+                        {record.state === "uncertain" ? <button type="button" disabled={inputSending || !online} onClick={async () => {
+                          if (!queueClient.current || inputSending) return;
+                          setInputSending(true);
+                          try {
+                            if (await queueClient.current.retry(record.request.message_id)) setPrompt((current) => current === record.request.text ? "" : current);
+                          } finally { setInputSending(false); }
+                        }}>Retry exact submission</button> : null}
+                        {["accepted", "uncertain"].includes(record.state) ? <>
+                          <button type="button" disabled={!online} onClick={() => void queueClient.current?.check(record.request.message_id)}>Check status</button>
+                          <button type="button" disabled={!online || inputSending} onClick={() => void queueClient.current?.drop(record.request.message_id)}>Discard</button>
+                        </> : <button type="button" onClick={() => { try { queueClient.current?.dismiss(record.request.message_id); } catch { setError("Could not update saved input"); } }}>Dismiss</button>}
+                      </div>
+                    </article>
+                  ))}
+                </div>
+                {queue.pending ? <details><summary>Server pending listing</summary><pre className="queue-listing">{queue.pending}</pre></details> : null}
+                <div className="queue-actions">
+                  <button type="button" disabled={!online} onClick={() => void queueClient.current?.refresh()}>Refresh queue</button>
+                  {!busy && !queue.turnId && (queue.pending || queue.records.some((record) => record.state === "accepted")) ? <button type="button" disabled={!online || !modelReady || queue.loading} onClick={() => void startTurn("/queue resume", true)}>Resume pending input</button> : null}
+                </div>
+              </details>
+            ) : null}
+            <div className="composer-actions">
+              {busy && queueSupported ? <label>Send as <select aria-label="Queued input mode" value={inputMode} onChange={(event) => setInputMode(event.target.value as InputMode)}><option value="steer">Steering</option><option value="follow_up">Follow-up</option></select></label> : null}
+              <small>{busy ? queueSupported ? inputMode === "steer" ? "Joins after the current response and its tools." : "Waits until the current task finishes." : "Draft saved here until this run finishes; this server does not support queued input." : "Enter to send · Shift Enter for a newline"}</small>
+              {busy ? <button type="button" className="stop-button" onClick={cancelTurn}><Icon name="stop" size={14} /> Stop</button> : null}
+            </div>
+            <div className="prompt-row"><span aria-hidden="true">›</span><textarea ref={promptRef} id="prompt" aria-label="Message" value={prompt} onChange={(event) => setPrompt(event.target.value)} onKeyDown={promptKeyDown} disabled={!canPrompt} rows={1} autoFocus enterKeyHint="send" placeholder={busy ? queueSupported ? "Add steering or a follow-up…" : "Draft your next message…" : modelReady ? "Describe the job" : modelWarming ? "Model is warming up…" : "Model unavailable"} /><button type="submit" disabled={!canSend || !prompt} className="send-button"><Icon name="send" /> {busy ? inputMode === "steer" ? "Steer" : "Queue" : "Send"}</button></div>
           </form>
         </section>
       </div>

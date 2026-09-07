@@ -1,4 +1,5 @@
 import { FlatJson, listSessions, loadTranscript, ZcoderError, ZcoderServer, zcoderRequest } from "@/lib/zcoder";
+import { validateInputRequest } from "@/lib/input-queue";
 
 type RpcInput = { action?: unknown; [key: string]: unknown };
 
@@ -24,6 +25,21 @@ export async function runRpc(server: ZcoderServer, input: RpcInput): Promise<Fla
     case "session.select": return zcoderRequest(server, "POST", "/v1/session/select", { id: text(input, "id", 80) });
     case "session.new": return zcoderRequest(server, "POST", "/v1/session/new", {});
     case "turn.start": return zcoderRequest(server, "POST", "/v1/turn", { prompt: text(input, "prompt", 900_000) });
+    case "input.submit": {
+      let request;
+      try { request = validateInputRequest(input); }
+      catch (error) { throw new ZcoderError(error instanceof Error ? error.message : "Invalid queued input", 400); }
+      return zcoderRequest(server, "POST", "/v1/input", request);
+    }
+    case "input.list": return zcoderRequest(server, "POST", "/v1/input/list", { session_id: text(input, "session_id", 80) });
+    case "input.status":
+    case "input.drop": {
+      const messageId = text(input, "message_id", 64);
+      if (!/^[A-Za-z0-9_-]+$/.test(messageId)) throw new ZcoderError("Invalid message_id", 400);
+      return zcoderRequest(server, "POST", input.action === "input.status" ? "/v1/input/status" : "/v1/input/drop", {
+        session_id: text(input, "session_id", 80), message_id: messageId,
+      });
+    }
     case "events.next": return zcoderRequest(server, "GET", `/v1/events?after=${cursor(input)}`);
     case "approval": {
       const decision = text(input, "decision", 1);
@@ -34,4 +50,3 @@ export async function runRpc(server: ZcoderServer, input: RpcInput): Promise<Fla
     default: throw new ZcoderError("Unknown operation", 400);
   }
 }
-

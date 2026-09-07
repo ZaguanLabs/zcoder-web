@@ -333,3 +333,22 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; }
 }
+
+.queue-panel { border-bottom: 1px solid var(--line); padding: 4px 0 9px; margin-bottom: 8px; font-size: 12px; }
+.queue-panel summary { cursor: pointer; color: var(--cyan); padding: 5px 0; }
+.queue-records { max-height: 25dvh; overflow-y: auto; }
+.queue-card { border: 1px solid var(--line-soft); background: var(--panel); padding: 8px; margin: 5px 0; }
+.queue-card header { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; }
+.queue-card header span { color: var(--yellow); }
+.queue-card pre, .queue-listing { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; max-height: 140px; overflow-y: auto; }
+.queue-panel p { color: var(--red); overflow-wrap: anywhere; }
+.queue-actions, .composer-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.queue-actions button, .composer-actions button, .composer-actions select { border: 1px solid var(--line); background: var(--raised); color: var(--text); padding: 7px 9px; font-size: 12px; }
+.composer-actions { padding-bottom: 8px; }
+.composer-actions label { color: var(--cyan); font-size: 12px; }
+.composer-actions small { flex: 1; color: var(--muted); min-width: 120px; }
+.composer-actions .stop-button { display: flex; align-items: center; gap: 5px; color: var(--red); margin-left: auto; }
+@media (max-width: 760px) {
+  .queue-actions button, .composer-actions button, .composer-actions select { min-height: 44px; }
+  .queue-records { max-height: 20dvh; }
+}
