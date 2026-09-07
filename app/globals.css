@@ -105,7 +105,7 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .message > header time { color: var(--muted); font-size: 11px; }
 .message-glyph { color: var(--cyan); }
 .message-assistant { border-left-color: var(--cyan); }
-.message-user { border-left-color: var(--green); }
+.message-user { border-left-color: var(--green); background: #18221c; }
 .message-user .message-glyph { color: var(--green); }
 .message-tool { border-left-color: var(--yellow); }
 .message-tool .message-glyph { color: var(--yellow); }
