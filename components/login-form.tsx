@@ -5,9 +5,6 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import styles from "@/app/login/login.module.css";
 
-const cls = (...parts: (string | boolean | undefined | null)[]) =>
-  parts.filter(Boolean).join(" ");
-
 export function LoginForm({ initialError = "" }: { initialError?: string }) {
   const router = useRouter();
   const [error, setError] = useState(initialError);
@@ -45,27 +42,17 @@ export function LoginForm({ initialError = "" }: { initialError?: string }) {
 
   return (
     <main className={styles.page}>
-      {/* Animated background */}
-      <div className={styles.orbs} aria-hidden="true">
-        <div className={cls(styles.orb, styles["orb--1"])} />
-        <div className={cls(styles.orb, styles["orb--2"])} />
-        <div className={cls(styles.orb, styles["orb--3"])} />
-      </div>
-      <div className={styles.gridOverlay} aria-hidden="true" />
-
-      {/* Card */}
       <div className={styles.card}>
-        {/* Logo */}
         <Link href="/" className={styles.logo}>
-          <div className={styles.logoIcon}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <polyline points="16 18 22 12 16 6" />
-              <polyline points="8 6 2 12 8 18" />
+          <span className={styles.logoIcon} aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="m13 2-3 8H4l7 4-1 8 10-12h-7l3-8" />
             </svg>
-          </div>
-          <div className={styles.logoText}>z<span>web</span></div>
+          </span>
+          <span className={styles.logoText}>zweb <small>/ zcoder.zsh</small></span>
         </Link>
-        <p className={styles.tagline}>Remote zcoder access point</p>
+        <h1 className={styles.heading}>Sign in to your workspace</h1>
+        <p className={styles.tagline}>Your servers, sessions, and agent transcript.</p>
 
         {/* Form */}
         <form className={styles.form} method="post" onSubmit={submit} aria-busy={pending}>
@@ -106,6 +93,7 @@ export function LoginForm({ initialError = "" }: { initialError?: string }) {
               <button
                 type="button"
                 className={styles.passwordToggle}
+                aria-label={showPassword ? "Hide passphrase" : "Show passphrase"}
                 aria-pressed={showPassword}
                 onClick={() => setShowPassword((v) => !v)}
                 disabled={pending}
@@ -118,7 +106,7 @@ export function LoginForm({ initialError = "" }: { initialError?: string }) {
           {error ? <p className={styles.error} role="alert">{error}</p> : null}
 
           <button type="submit" className={styles.submit} disabled={pending}>
-            <span>{pending ? "authenticating…" : "unlock"}</span>
+            <span>{pending ? "Signing in…" : "Sign in"}</span>
             <span className={styles.submitArrow} aria-hidden="true">{pending ? "…" : "→"}</span>
           </button>
         </form>

@@ -548,14 +548,15 @@ export function ConsoleApp() {
   return (
     <main className="console-shell">
       <header className="topbar">
-        <div className="wordmark"><span><Icon name="bolt" size={17} /></span> zweb <small>/ remote zcoder</small></div>
+        <div className="wordmark"><span><Icon name="bolt" size={17} /></span> zweb <small>/ zcoder.zsh</small></div>
+        <div className="active-model" title={hello ? String(hello.model) : undefined}>{hello ? String(hello.model) : "No model connected"}</div>
         <div className="server-switcher">
           <label htmlFor="server-select">Server</label>
           <select id="server-select" value={serverId} disabled={busy || inputSending || sessionsLoading} onChange={(event) => { const id = event.target.value; sessionStorage.setItem("zcoder-server-id", id); setServerId(id); void connect(id); }}>
             {servers.map((server) => <option key={server.id} value={server.id}>{server.name}</option>)}
           </select>
         </div>
-        <div className={`connection-state state-${displayStatus.toLowerCase().replaceAll(" ", "-")}`} role="status"><span />{displayStatus}</div>
+        <div className={`connection-state state-${displayStatus.toLowerCase().replaceAll(" ", "-")}`} role="status">{displayStatus}</div>
         <button type="button" className="icon-button logout-button" onClick={logout} aria-label="Log out" title="Log out"><Icon name="logout" /></button>
       </header>
 
@@ -574,16 +575,15 @@ export function ConsoleApp() {
       <div className="workbench">
         <button type="button" className={`session-backdrop ${mobileSessions ? "visible" : ""}`} aria-label="Close sessions" tabIndex={mobileSessions ? 0 : -1} onClick={() => setMobileSessions(false)} />
         <aside id="session-drawer" className={`session-pane ${mobileSessions ? "mobile-open" : ""}`} aria-label="Remote sessions">
-          <div className="pane-title"><span>Sessions</span><b>{String(sessions.length).padStart(2, "0")}</b><button type="button" className="drawer-close" aria-label="Close sessions" onClick={() => setMobileSessions(false)}>×</button></div>
+          <div className="pane-title"><span>Sessions ({sessions.length})</span><button type="button" className="drawer-close" aria-label="Close sessions" onClick={() => setMobileSessions(false)}>×</button></div>
           <button type="button" className="new-session" disabled={busy || inputSending || sessionsLoading || hello?.sessions !== true} onClick={createSession}><Icon name="plus" /> New session</button>
           <nav aria-label="Remote sessions">
             {sessions.map((session) => {
               const id = String(session.id);
               return (
-                <button type="button" key={id} className={sessionId === id ? "active" : ""} disabled={busy || inputSending || sessionsLoading} onClick={() => void loadSession(serverId, id, true).catch((cause) => setError(cause instanceof Error ? cause.message : "Could not select session"))}>
-                  <span className="session-rail" />
+                <button type="button" key={id} className={sessionId === id ? "active" : ""} aria-current={sessionId === id ? "true" : undefined} title={String(session.title || "Untitled session")} disabled={busy || inputSending || sessionsLoading} onClick={() => void loadSession(serverId, id, true).catch((cause) => setError(cause instanceof Error ? cause.message : "Could not select session"))}>
+                  <span className="session-rail" aria-hidden="true">{sessionId === id ? "▸" : ""}</span>
                   <span className="session-text"><strong>{String(session.title || "Untitled session")}</strong><small>{String(session.model || "Model unknown")}</small></span>
-                  <Icon name="chevron" size={13} />
                 </button>
               );
             })}
@@ -591,16 +591,16 @@ export function ConsoleApp() {
           </nav>
           {hello ? (
             <dl className="server-facts">
-              <div><dt>Workspace</dt><dd title={String(hello.workspace)}>{String(hello.workspace)}</dd></div>
-              <div><dt>Model</dt><dd>{String(hello.model)}</dd></div>
+              <div><dt>Project</dt><dd className="workspace-name" title={String(hello.workspace)}>{String(hello.workspace)}</dd></div>
+              <div><dt>Model</dt><dd className="model-name" title={String(hello.model)}>{String(hello.model)}</dd></div>
               <div><dt>Profile</dt><dd>{String(hello.profile)}</dd></div>
               <div><dt>Shell</dt><dd className={`policy-${hello.command_policy}`}>{String(hello.command_policy)}</dd></div>
             </dl>
           ) : null}
         </aside>
 
-        <section className="transcript-pane">
-          <div className="pane-title transcript-title"><span>Agent transcript</span><b>{messages.length} events</b><small>{hello ? String(hello.model) : "protocol 1"}</small></div>
+        <section className="transcript-pane" aria-labelledby="transcript-title">
+          <div className="pane-title transcript-title"><span id="transcript-title">Agent transcript ({messages.length} events)</span></div>
           <div className="transcript" ref={transcriptRef} aria-live="polite">
             {connecting ? <div className="loading-state"><span /><p>Establishing secure gateway</p></div> : null}
             {!connecting && !hello ? (
@@ -608,9 +608,9 @@ export function ConsoleApp() {
             ) : null}
             {!connecting && hello && !messages.length ? (
               <div className="empty-state ready-empty">
-                <span className="prompt-symbol">›_</span>
-                <h2>{modelReady ? "Ready for a job" : modelWarming ? "Model warming up" : "Model unavailable"}</h2>
-                <p>{modelReady ? "Start a new turn in the selected server session." : modelWarming ? "Sessions remain available while the model prepares." : "Sessions remain available while the model is unavailable."}</p>
+                <h2><span className="prompt-symbol" aria-hidden="true">›</span> {modelReady ? "Welcome to zcoder.zsh" : modelWarming ? "Model warming up" : "Model unavailable"}</h2>
+                <p>{modelReady ? "Ask for a change, investigation, or build. Start a new job or continue a session from the sidebar." : modelWarming ? "Sessions remain available while the model prepares." : "Sessions remain available while the model is unavailable."}</p>
+                {modelReady ? <p className="welcome-hint">Write your prompt below to get started.</p> : null}
               </div>
             ) : null}
             {messages.map((message, index) => <TranscriptMessage key={`${String(message.seq ?? "local")}-${index}`} event={message} />)}
@@ -622,50 +622,51 @@ export function ConsoleApp() {
               <div className="approval-actions"><button type="button" className="deny" onClick={() => void answerApproval("n")}>Deny</button><button type="button" onClick={() => void answerApproval("y")}>Allow once</button>{hello?.profile === "coding" ? <button type="button" className="allow" onClick={() => void answerApproval("a")}>Allow until restart</button> : null}</div>
             </section>
           ) : null}
-          <form className="prompt-box" onSubmit={submitPrompt}>
-            {queueSupported && sessionId ? (
-              <details className="queue-panel" open={queue.records.some((record) => ["uncertain", "accepted"].includes(record.state)) || Boolean(queue.pending) || Boolean(queue.error)}>
-                <summary>Queued input · {queue.records.filter((record) => record.state === "accepted").length} pending from this browser</summary>
-                {queue.error ? <p role="alert">{queue.error}</p> : null}
-                <div className="queue-records">
-                  {queue.records.map((record) => (
-                    <article className="queue-card" key={record.request.message_id}>
-                      <header><strong>{record.request.mode === "steer" ? "Steering" : "Follow-up"}</strong><span>{record.state === "uncertain" ? "Unconfirmed" : record.state === "accepted" ? (queue.turnId ? "Pending" : "Paused") : record.state === "consumed" ? "Added to history" : record.state === "discarded" ? "Discarded" : "Rejected"}</span></header>
-                      <pre>{record.request.text}</pre>
-                      {record.error ? <p role="alert">{record.error}</p> : null}
-                      <div className="queue-actions">
-                        {record.state === "uncertain" ? <button type="button" disabled={inputSending || !online} onClick={async () => {
-                          if (!queueClient.current || inputSending) return;
-                          setInputSending(true);
-                          try {
-                            if (await queueClient.current.retry(record.request.message_id)) setPrompt((current) => current === record.request.text ? "" : current);
-                          } finally { setInputSending(false); }
-                        }}>Retry exact submission</button> : null}
-                        {["accepted", "uncertain"].includes(record.state) ? <>
-                          <button type="button" disabled={!online} onClick={() => void queueClient.current?.check(record.request.message_id)}>Check status</button>
-                          <button type="button" disabled={!online || inputSending} onClick={() => void queueClient.current?.drop(record.request.message_id)}>Discard</button>
-                        </> : <button type="button" onClick={() => { try { queueClient.current?.dismiss(record.request.message_id); } catch { setError("Could not update saved input"); } }}>Dismiss</button>}
-                      </div>
-                    </article>
-                  ))}
-                </div>
-                {queue.pending ? <details><summary>Server pending listing</summary><pre className="queue-listing">{queue.pending}</pre></details> : null}
-                <div className="queue-actions">
-                  <button type="button" disabled={!online} onClick={() => void queueClient.current?.refresh()}>Refresh queue</button>
-                  {!busy && !queue.turnId && (queue.pending || queue.records.some((record) => record.state === "accepted")) ? <button type="button" disabled={!online || !modelReady || queue.loading} onClick={() => void startTurn("/queue resume", true)}>Resume pending input</button> : null}
-                </div>
-              </details>
-            ) : null}
-            <div className="composer-actions">
-              {busy && queueSupported ? <label>Send as <select aria-label="Queued input mode" value={inputMode} onChange={(event) => setInputMode(event.target.value as InputMode)}><option value="steer">Steering</option><option value="follow_up">Follow-up</option></select></label> : null}
-              <small>{busy ? queueSupported ? inputMode === "steer" ? "Joins after the current response and its tools." : "Waits until the current task finishes." : "Draft saved here until this run finishes; this server does not support queued input." : "Enter to send · Shift Enter for a newline"}</small>
-              {busy ? <button type="button" className="stop-button" onClick={cancelTurn}><Icon name="stop" size={14} /> Stop</button> : null}
-            </div>
-            <div className="prompt-row"><span aria-hidden="true">›</span><textarea ref={promptRef} id="prompt" aria-label="Message" value={prompt} onChange={(event) => setPrompt(event.target.value)} onKeyDown={promptKeyDown} disabled={!canPrompt} rows={1} autoFocus enterKeyHint="send" placeholder={busy ? queueSupported ? "Add steering or a follow-up…" : "Draft your next message…" : modelReady ? "Describe the job" : modelWarming ? "Model is warming up…" : "Model unavailable"} /><button type="submit" disabled={!canSend || !prompt} className="send-button"><Icon name="send" /> {busy ? inputMode === "steer" ? "Steer" : "Queue" : "Send"}</button></div>
-          </form>
         </section>
       </div>
-      <footer className="keybar"><span><kbd>Enter</kbd> Send</span><span><kbd>Shift Enter</kbd> Newline</span><span><kbd>Esc</kbd> Stop</span><span className="keybar-right">Protocol 1 · browser secrets: none</span></footer>
+      <form className="prompt-box" onSubmit={submitPrompt}>
+        <label htmlFor="prompt" className="prompt-title">Prompt</label>
+        {queueSupported && sessionId ? (
+          <details className="queue-panel" open={queue.records.some((record) => ["uncertain", "accepted"].includes(record.state)) || Boolean(queue.pending) || Boolean(queue.error)}>
+            <summary>Queued input · {queue.records.filter((record) => record.state === "accepted").length} pending from this browser</summary>
+            {queue.error ? <p role="alert">{queue.error}</p> : null}
+            <div className="queue-records">
+              {queue.records.map((record) => (
+                <article className="queue-card" key={record.request.message_id}>
+                  <header><strong>{record.request.mode === "steer" ? "Steering" : "Follow-up"}</strong><span>{record.state === "uncertain" ? "Unconfirmed" : record.state === "accepted" ? (queue.turnId ? "Pending" : "Paused") : record.state === "consumed" ? "Added to history" : record.state === "discarded" ? "Discarded" : "Rejected"}</span></header>
+                  <pre>{record.request.text}</pre>
+                  {record.error ? <p role="alert">{record.error}</p> : null}
+                  <div className="queue-actions">
+                    {record.state === "uncertain" ? <button type="button" disabled={inputSending || !online} onClick={async () => {
+                      if (!queueClient.current || inputSending) return;
+                      setInputSending(true);
+                      try {
+                        if (await queueClient.current.retry(record.request.message_id)) setPrompt((current) => current === record.request.text ? "" : current);
+                      } finally { setInputSending(false); }
+                    }}>Retry exact submission</button> : null}
+                    {["accepted", "uncertain"].includes(record.state) ? <>
+                      <button type="button" disabled={!online} onClick={() => void queueClient.current?.check(record.request.message_id)}>Check status</button>
+                      <button type="button" disabled={!online || inputSending} onClick={() => void queueClient.current?.drop(record.request.message_id)}>Discard</button>
+                    </> : <button type="button" onClick={() => { try { queueClient.current?.dismiss(record.request.message_id); } catch { setError("Could not update saved input"); } }}>Dismiss</button>}
+                  </div>
+                </article>
+              ))}
+            </div>
+            {queue.pending ? <details><summary>Server pending listing</summary><pre className="queue-listing">{queue.pending}</pre></details> : null}
+            <div className="queue-actions">
+              <button type="button" disabled={!online} onClick={() => void queueClient.current?.refresh()}>Refresh queue</button>
+              {!busy && !queue.turnId && (queue.pending || queue.records.some((record) => record.state === "accepted")) ? <button type="button" disabled={!online || !modelReady || queue.loading} onClick={() => void startTurn("/queue resume", true)}>Resume pending input</button> : null}
+            </div>
+          </details>
+        ) : null}
+        <div className="composer-actions">
+          {busy && queueSupported ? <label>Send as <select aria-label="Queued input mode" value={inputMode} onChange={(event) => setInputMode(event.target.value as InputMode)}><option value="steer">Steering</option><option value="follow_up">Follow-up</option></select></label> : null}
+          <small>{busy ? queueSupported ? inputMode === "steer" ? "Joins after the current response and its tools." : "Waits until the current task finishes." : "Draft saved here until this run finishes; this server does not support queued input." : "Enter to send · Shift Enter for a newline"}</small>
+          {busy ? <button type="button" className="stop-button" onClick={cancelTurn}><Icon name="stop" size={14} /> Stop</button> : null}
+        </div>
+        <div className="prompt-row"><span aria-hidden="true">›</span><textarea ref={promptRef} id="prompt" aria-label="Message" value={prompt} onChange={(event) => setPrompt(event.target.value)} onKeyDown={promptKeyDown} disabled={!canPrompt} rows={1} autoFocus enterKeyHint="send" placeholder={busy ? queueSupported ? "Add steering or a follow-up…" : "Draft your next message…" : modelReady ? "Describe the job" : modelWarming ? "Model is warming up…" : "Model unavailable"} /><button type="submit" disabled={!canSend || !prompt} className="send-button"><Icon name="send" /> {busy ? inputMode === "steer" ? "Steer" : "Queue" : "Send"}</button></div>
+      </form>
+      <footer className="keybar"><span><kbd>Enter</kbd> Send</span><span><kbd>Shift Enter</kbd> Newline</span><span><kbd>Esc</kbd> Stop</span><span><kbd>Tab</kbd> Focus</span><span className="keybar-right">zweb · remote zcoder</span></footer>
     </main>
   );
 }

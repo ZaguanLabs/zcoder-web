@@ -10,8 +10,8 @@ describe("web app manifest", () => {
       start_url: "/",
       scope: "/",
       display: "standalone",
-      background_color: "#070909",
-      theme_color: "#070909",
+      background_color: "#1e1e1e",
+      theme_color: "#1e1e1e",
     });
     expect(value.icons).toEqual(expect.arrayContaining([
       expect.objectContaining({ sizes: "192x192", purpose: "any" }),

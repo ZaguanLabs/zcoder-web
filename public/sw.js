@@ -1,5 +1,5 @@
 /* zweb intentionally never caches authenticated pages, API data, or mutations. */
-const CACHE_NAME = "zweb-shell-v1";
+const CACHE_NAME = "zweb-shell-v2";
 const PRECACHE = [
   "/offline.html",
   "/offline.css",
