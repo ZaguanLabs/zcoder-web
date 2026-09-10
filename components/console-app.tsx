@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, KeyboardEvent, memo, useCallback, useEffect, useRef, useState } from "react";
+import { FormEvent, KeyboardEvent, memo, useCallback, useEffect, useEffectEvent, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icons";
@@ -99,6 +99,8 @@ export function ConsoleApp() {
   const [connecting, setConnecting] = useState(true);
   const [sessionsLoading, setSessionsLoading] = useState(false);
   const [approval, setApproval] = useState<Approval | null>(null);
+  const [approvalSending, setApprovalSending] = useState(false);
+  const [sidebarHidden, setSidebarHidden] = useState(false);
   const [mobileSessions, setMobileSessions] = useState(false);
   const [online, setOnline] = useState(true);
   const [runId, setRunId] = useState("");
@@ -107,6 +109,10 @@ export function ConsoleApp() {
   const [inputSending, setInputSending] = useState(false);
   const queueClient = useRef<InputQueue | null>(null);
   const submissionLock = useRef(false);
+  const approvalLock = useRef<Approval | null>(null);
+  const sidebarRef = useRef<HTMLElement>(null);
+  const sidebarToggleRef = useRef<HTMLButtonElement>(null);
+  const mobileSidebarToggleRef = useRef<HTMLButtonElement>(null);
   const preparingController = useRef<AbortController | null>(null);
   const initialServerId = useRef(serverId);
   const transcriptRef = useRef<HTMLDivElement>(null);
@@ -508,10 +514,12 @@ export function ConsoleApp() {
   }
 
   async function answerApproval(decision: "y" | "a" | "n") {
-    if (!approval || !serverId) return;
+    if (!approval || !serverId || approvalLock.current || !online || connecting) return;
+    approvalLock.current = approval;
+    setApprovalSending(true);
     try {
       await rpc(serverId, { action: "approval", id: approval.id, decision });
-      setApproval(null);
+      setApproval((current) => current === approval ? null : current);
       setStatus(decision === "n" ? "Command denied" : "Working");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Approval failed");
@@ -522,8 +530,38 @@ export function ConsoleApp() {
       setApproval(null);
       setStatus("Approval failed");
       await queueClient.current?.refresh();
+    } finally {
+      approvalLock.current = null;
+      setApprovalSending(false);
     }
   }
+
+  function toggleSidebar() {
+    const mobile = window.matchMedia("(max-width: 860px)").matches;
+    if (sidebarRef.current?.contains(document.activeElement)) {
+      (mobile ? mobileSidebarToggleRef : sidebarToggleRef).current?.focus({ preventScroll: true });
+    }
+    if (mobile) setMobileSessions((open) => !open);
+    else setSidebarHidden((hidden) => !hidden);
+  }
+
+  const handleShortcut = useEffectEvent((event: globalThis.KeyboardEvent) => {
+    if (event.defaultPrevented || event.isComposing || event.getModifierState("AltGraph")) return;
+    const key = event.key.toLowerCase();
+    if (event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey && key === "b") {
+      event.preventDefault();
+      if (!event.repeat) toggleSidebar();
+    } else if (approval && event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey && (key === "y" || key === "n")) {
+      event.preventDefault();
+      if (!event.repeat) void answerApproval(key);
+    }
+  });
+
+  useEffect(() => {
+    const onKeyDown = (event: globalThis.KeyboardEvent) => handleShortcut(event);
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   async function cancelTurn() {
     if (!serverId || !busy) return;
@@ -548,6 +586,7 @@ export function ConsoleApp() {
   return (
     <main className="console-shell">
       <header className="topbar">
+        <button ref={sidebarToggleRef} type="button" className="sidebar-toggle" onClick={toggleSidebar} aria-label={sidebarHidden ? "Show sidebar" : "Hide sidebar"} aria-expanded={!sidebarHidden} aria-controls="session-drawer" aria-keyshortcuts="Control+b" title={`${sidebarHidden ? "Show" : "Hide"} sidebar (Ctrl+B)`}><Icon name="sidebar" size={18} /></button>
         <div className="wordmark"><span><Icon name="bolt" size={17} /></span> zweb <small>/ zcoder.zsh</small></div>
         <div className="active-model" title={hello ? String(hello.model) : undefined}>{hello ? String(hello.model) : "No model connected"}</div>
         <div className="server-switcher">
@@ -561,7 +600,7 @@ export function ConsoleApp() {
       </header>
 
       <div className="mobile-bar">
-        <button type="button" className="mobile-session-trigger" aria-expanded={mobileSessions} aria-controls="session-drawer" onClick={() => setMobileSessions((open) => !open)}>
+        <button ref={mobileSidebarToggleRef} type="button" className="mobile-session-trigger" aria-expanded={mobileSessions} aria-controls="session-drawer" aria-keyshortcuts="Control+b" title="Toggle sessions (Ctrl+B)" onClick={toggleSidebar}>
           <Icon name="server" /> Sessions <span>{sessions.length}</span>
         </button>
         <label className="mobile-server-switcher">
@@ -572,9 +611,9 @@ export function ConsoleApp() {
         </label>
       </div>
 
-      <div className="workbench">
+      <div className={`workbench ${sidebarHidden ? "sidebar-hidden" : ""}`}>
         <button type="button" className={`session-backdrop ${mobileSessions ? "visible" : ""}`} aria-label="Close sessions" tabIndex={mobileSessions ? 0 : -1} onClick={() => setMobileSessions(false)} />
-        <aside id="session-drawer" className={`session-pane ${mobileSessions ? "mobile-open" : ""}`} aria-label="Remote sessions">
+        <aside ref={sidebarRef} id="session-drawer" className={`session-pane ${mobileSessions ? "mobile-open" : ""}`} aria-label="Remote sessions">
           <div className="pane-title"><span>Sessions ({sessions.length})</span><button type="button" className="drawer-close" aria-label="Close sessions" onClick={() => setMobileSessions(false)}>×</button></div>
           <button type="button" className="new-session" disabled={busy || inputSending || sessionsLoading || hello?.sessions !== true} onClick={createSession}><Icon name="plus" /> New session</button>
           <nav aria-label="Remote sessions">
@@ -619,7 +658,11 @@ export function ConsoleApp() {
           {approval ? (
             <section className="approval-bar" aria-labelledby="approval-title">
               <div><p id="approval-title"><span>!</span> Command approval required</p><code>{approval.command}</code></div>
-              <div className="approval-actions"><button type="button" className="deny" onClick={() => void answerApproval("n")}>Deny</button><button type="button" onClick={() => void answerApproval("y")}>Allow once</button>{hello?.profile === "coding" ? <button type="button" className="allow" onClick={() => void answerApproval("a")}>Allow until restart</button> : null}</div>
+              <div className="approval-actions">
+                <button type="button" className="deny" disabled={approvalSending || !online || connecting} aria-keyshortcuts="Alt+n" title="Deny command (Alt+N)" onClick={() => void answerApproval("n")}>Deny <kbd>Alt+N</kbd></button>
+                <button type="button" disabled={approvalSending || !online || connecting} aria-keyshortcuts="Alt+y" title="Allow command once (Alt+Y)" onClick={() => void answerApproval("y")}>Allow once <kbd>Alt+Y</kbd></button>
+                {hello?.profile === "coding" ? <button type="button" className="allow" disabled={approvalSending || !online || connecting} onClick={() => void answerApproval("a")}>Allow until restart</button> : null}
+              </div>
             </section>
           ) : null}
         </section>
@@ -666,7 +709,7 @@ export function ConsoleApp() {
         </div>
         <div className="prompt-row"><span aria-hidden="true">›</span><textarea ref={promptRef} id="prompt" aria-label="Message" value={prompt} onChange={(event) => setPrompt(event.target.value)} onKeyDown={promptKeyDown} disabled={!canPrompt} rows={1} autoFocus enterKeyHint="send" placeholder={busy ? queueSupported ? "Add steering or a follow-up…" : "Draft your next message…" : modelReady ? "Describe the job" : modelWarming ? "Model is warming up…" : "Model unavailable"} /><button type="submit" disabled={!canSend || !prompt} className="send-button"><Icon name="send" /> {busy ? inputMode === "steer" ? "Steer" : "Queue" : "Send"}</button></div>
       </form>
-      <footer className="keybar"><span><kbd>Enter</kbd> Send</span><span><kbd>Shift Enter</kbd> Newline</span><span><kbd>Esc</kbd> Stop</span><span><kbd>Tab</kbd> Focus</span><span className="keybar-right">zweb · remote zcoder</span></footer>
+      <footer className="keybar"><span><kbd>Enter</kbd> Send</span><span><kbd>Shift Enter</kbd> Newline</span><span><kbd>Esc</kbd> Stop</span><span><kbd>Ctrl+B</kbd> Sidebar</span><span><kbd>Tab</kbd> Focus</span><span className="keybar-right">zweb · remote zcoder</span></footer>
     </main>
   );
 }

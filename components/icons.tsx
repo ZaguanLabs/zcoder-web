@@ -1,4 +1,4 @@
-type IconProps = { name: "bolt" | "plus" | "logout" | "send" | "stop" | "server" | "chevron"; size?: number };
+type IconProps = { name: "bolt" | "plus" | "logout" | "send" | "stop" | "server" | "chevron" | "sidebar"; size?: number };
 
 const paths = {
   bolt: <path d="M13 2 4.5 13h6L9 22l8.5-12h-6L13 2Z" />,
@@ -8,9 +8,9 @@ const paths = {
   stop: <path d="M7 7h10v10H7z" />,
   server: <><rect x="3" y="4" width="18" height="6" rx="1" /><rect x="3" y="14" width="18" height="6" rx="1" /><path d="M7 7h.01M7 17h.01" /></>,
   chevron: <path d="m9 18 6-6-6-6" />,
+  sidebar: <><rect x="3" y="3" width="18" height="18" rx="1" /><path d="M9 3v18" /></>,
 };
 
 export function Icon({ name, size = 16 }: IconProps) {
   return <svg aria-hidden="true" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="square" strokeLinejoin="miter">{paths[name]}</svg>;
 }
-
