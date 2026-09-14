@@ -40,12 +40,34 @@ function isAbortError(error: unknown): boolean {
   return error instanceof DOMException && error.name === "AbortError";
 }
 
+const TOOL_NAMES: Record<string, string> = {
+  list_files: "List Files",
+  read_file: "Read File",
+  read_file_range: "Read File Range",
+  search: "Search Files",
+  write_file: "Write File",
+  replace_text: "Replace Text",
+  apply_patch: "Apply Patch",
+  run_command: "Run Command",
+  list_agents: "List Agents",
+  send_agent_message: "Send Agent Message",
+  discover_skills: "Discover Skills",
+  activate_skill: "Activate Skill",
+  read_skill_resource: "Read Skill Resource",
+  finish: "Finish",
+};
+
 function roleName(role: Flat["role"]) {
   if (role === "assistant") return "Assistant";
   if (role === "user") return "You";
   if (role === "tool") return "Tool activity";
   if (role === "error") return "Error";
   return String(role || "System");
+}
+
+function toolName(tool: string | undefined | null): string {
+  if (!tool) return tool ?? "";
+  return TOOL_NAMES[tool] ?? tool;
 }
 
 function stripAnsi(text: string): string {
@@ -62,7 +84,8 @@ const TranscriptMessage = memo(function TranscriptMessage({ event }: { event: Fl
     <article className={`message message-${role}`}>
       <header>
         <span className="message-glyph" aria-hidden="true">{role === "assistant" ? "◆" : role === "user" ? "›" : role === "tool" ? "⚙" : "!"}</span>
-        <strong>{roleName(event.role)}</strong>
+        {role !== "tool" ? <strong>{roleName(event.role)}</strong> : null}
+        {isTool ? <span className="tool-name">{toolName(String(event.tool_name ?? ""))}</span> : null}
         {event.time ? <time>{String(event.time)}</time> : null}
       </header>
       {thinking ? (
@@ -451,6 +474,10 @@ export function ConsoleApp() {
     preparingController.current = controller;
     try {
       if (resume) await rpc(serverId, { action: "session.select", id: sessionId }, controller.signal);
+      if (!resume) {
+        setMessages((current) => [...current, { event: "message", role: "user", content: value, thinking: "", time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) }]);
+        setPrompt((current) => current === value ? "" : current);
+      }
       let model: Flat = hello ?? {};
       if (hello?.model_status !== undefined) {
         model = await rpc(serverId, { action: "model.ensure" }, controller.signal) as Flat;
@@ -467,10 +494,6 @@ export function ConsoleApp() {
       const receipt = await rpc(serverId, { action: "turn.start", prompt: value }) as Flat;
       if (typeof receipt.turn_id !== "string" || !receipt.turn_id) throw new Error("Server returned an invalid turn receipt; reconnect to inspect the run before retrying");
       setRunId(receipt.turn_id);
-      if (!resume) {
-        setMessages((current) => [...current, { event: "message", role: "user", content: value, thinking: "", time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) }]);
-        setPrompt((current) => current === value ? "" : current);
-      }
       setStatus(receipt.model_status === "warming" ? "Warming up" : "Working");
       void queueClient.current?.refresh();
       void pollEvents(serverId, sessionId, hello?.sessions === true, receipt.turn_id);
