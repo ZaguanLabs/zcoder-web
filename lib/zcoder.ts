@@ -79,11 +79,13 @@ export async function zcoderRequest(server: ZcoderServer, method: "GET" | "POST"
   }
 }
 
+const SESSION_PAGE_LIMIT = 100;
+
 export async function listSessions(server: ZcoderServer): Promise<FlatJson[]> {
   const sessions: FlatJson[] = [];
   let cursor = 0;
   for (let count = 0; count < 500; count += 1) {
-    const item = await zcoderRequest(server, "GET", `/v1/sessions?after=${cursor}`);
+    const item = await zcoderRequest(server, "GET", `/v1/sessions?after=${cursor}&limit=${SESSION_PAGE_LIMIT}`);
     if (item.event === "none") return sessions;
     if (item.event !== "session" || typeof item.seq !== "number" || item.seq <= cursor) throw new ZcoderError("Remote session cursor did not advance");
     sessions.push(item);
@@ -92,12 +94,14 @@ export async function listSessions(server: ZcoderServer): Promise<FlatJson[]> {
   throw new ZcoderError("Remote session list exceeded 500 items");
 }
 
+const TRANSCRIPT_PAGE_LIMIT = 500;
+
 export async function loadTranscript(server: ZcoderServer, id: string): Promise<FlatJson[]> {
   if (!/^\d+_\d+$/.test(id)) throw new ZcoderError("Invalid session id", 400);
   const events: FlatJson[] = [];
   let cursor = 0;
   for (let count = 0; count < 10_000; count += 1) {
-    const item = await zcoderRequest(server, "GET", `/v1/session?id=${id}&after=${cursor}`);
+    const item = await zcoderRequest(server, "GET", `/v1/session?id=${id}&after=${cursor}&limit=${TRANSCRIPT_PAGE_LIMIT}`);
     if (item.event === "none") return events;
     if (item.event !== "message" || typeof item.seq !== "number" || item.seq <= cursor) throw new ZcoderError("Remote transcript cursor did not advance");
     events.push(item);

@@ -21,6 +21,9 @@ beforeAll(async () => {
       if (url.pathname === "/v1/hello") payload = { protocol: 1, server_name: "Test bench" };
       else if (url.pathname === "/v1/sessions" && url.searchParams.get("after") === "0") {
         payload = { event: "session", seq: 1, id: "100_200", title: "One", current: 1, empty: 0 };
+      } else if (url.pathname === "/v1/sessions") {
+        // limit parameter present but ignored in test mock
+        payload = { event: "none" };
       } else payload = { event: "none" };
       const body = JSON.stringify(payload);
       response.writeHead(200, { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body), Connection: "close" });
