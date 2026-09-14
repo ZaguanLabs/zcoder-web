@@ -601,7 +601,7 @@ export function ConsoleApp() {
 
       <div className="mobile-bar">
         <button ref={mobileSidebarToggleRef} type="button" className="mobile-session-trigger" aria-expanded={mobileSessions} aria-controls="session-drawer" aria-keyshortcuts="Control+b" title="Toggle sessions (Ctrl+B)" onClick={toggleSidebar}>
-          <Icon name="server" /> Sessions <span>{sessions.length}</span>
+          <Icon name="server" /> <span>{sessions.length}</span>
         </button>
         <label className="mobile-server-switcher">
           <span className="sr-only">Server</span>
@@ -614,7 +614,7 @@ export function ConsoleApp() {
       <div className={`workbench ${sidebarHidden ? "sidebar-hidden" : ""}`}>
         <button type="button" className={`session-backdrop ${mobileSessions ? "visible" : ""}`} aria-label="Close sessions" tabIndex={mobileSessions ? 0 : -1} onClick={() => setMobileSessions(false)} />
         <aside ref={sidebarRef} id="session-drawer" className={`session-pane ${mobileSessions ? "mobile-open" : ""}`} aria-label="Remote sessions">
-          <div className="pane-title"><span>Sessions ({sessions.length})</span><button type="button" className="drawer-close" aria-label="Close sessions" onClick={() => setMobileSessions(false)}>×</button></div>
+          <div className="pane-title"><span><span className="sessions-label">Sessions</span> ({sessions.length})</span><button type="button" className="drawer-close" aria-label="Close sessions" onClick={() => setMobileSessions(false)}>×</button></div>
           <button type="button" className="new-session" disabled={busy || inputSending || sessionsLoading || hello?.sessions !== true} onClick={createSession}><Icon name="plus" /> New session</button>
           <nav aria-label="Remote sessions">
             {sessions.map((session) => {
@@ -630,6 +630,7 @@ export function ConsoleApp() {
           </nav>
           {hello ? (
             <dl className="server-facts">
+              <div><dt>Server</dt><dd><select className="mobile-server-select" value={serverId} aria-label="Active server" disabled={busy || inputSending || sessionsLoading} onChange={(event) => { const id = event.target.value; sessionStorage.setItem("zcoder-server-id", id); setServerId(id); void connect(id); }}>{servers.map((server) => <option key={server.id} value={server.id}>{server.name}</option>)}</select></dd></div>
               <div><dt>Project</dt><dd className="workspace-name" title={String(hello.workspace)}>{String(hello.workspace)}</dd></div>
               <div><dt>Model</dt><dd className="model-name" title={String(hello.model)}>{String(hello.model)}</dd></div>
               <div><dt>Profile</dt><dd>{String(hello.profile)}</dd></div>
@@ -668,7 +669,6 @@ export function ConsoleApp() {
         </section>
       </div>
       <form className="prompt-box" onSubmit={submitPrompt}>
-        <label htmlFor="prompt" className="prompt-title">Prompt</label>
         {queueSupported && sessionId ? (
           <details className="queue-panel" open={queue.records.some((record) => ["uncertain", "accepted"].includes(record.state)) || Boolean(queue.pending) || Boolean(queue.error)}>
             <summary>Queued input · {queue.records.filter((record) => record.state === "accepted").length} pending from this browser</summary>
