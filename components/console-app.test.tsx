@@ -30,6 +30,7 @@ describe("console keyboard controls", () => {
       requests.push(body);
       switch (body.action) {
         case "hello": return Response.json({ protocol: 1, sessions: true, model: "Test", profile: "coding" });
+        case "session.new": return Response.json({ id: "session-2" });
         case "sessions.list": return Response.json([{ id: "session-1", title: "Test session" }]);
         case "turn.start": return Response.json({ turn_id: "turn-1" });
         case "events.next":

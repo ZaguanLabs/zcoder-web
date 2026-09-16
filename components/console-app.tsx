@@ -4,7 +4,7 @@ import { FormEvent, KeyboardEvent, memo, useCallback, useEffect, useEffectEvent,
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icons";
-import { isTransientRpcError, readRpcJson } from "@/lib/client-rpc";
+import { isTransientRpcError, readRpcJson, RpcResponseError } from "@/lib/client-rpc";
 import { emptyQueue, InputQueue, type InputMode, type QueueSnapshot } from "@/lib/input-queue";
 
 const MarkdownContent = dynamic(
@@ -121,6 +121,7 @@ export function ConsoleApp() {
   const [busy, setBusy] = useState(false);
   const [connecting, setConnecting] = useState(true);
   const [sessionsLoading, setSessionsLoading] = useState(false);
+  const [sessionsListing, setSessionsListing] = useState(false);
   const [approval, setApproval] = useState<Approval | null>(null);
   const [approvalSending, setApprovalSending] = useState(false);
   const [sidebarHidden, setSidebarHidden] = useState(false);
@@ -148,7 +149,8 @@ export function ConsoleApp() {
   const canPrompt = Boolean(hello) && !connecting;
   const canQueue = busy && queueSupported && Boolean(runId) && queue.turnId === runId && !queue.loading && !queue.error;
   const hasUncertainInput = queue.records.some((record) => record.state === "uncertain");
-  const canSend = online && !sessionsLoading && !inputSending && !hasUncertainInput &&
+  const canSend = online && !connecting && !sessionsLoading && !inputSending && !hasUncertainInput &&
+    (hello?.sessions !== true || Boolean(sessionId)) &&
     (busy ? canQueue : modelReady && !approval && (!queueSupported || Boolean(sessionId) && !queue.loading && !queue.error));
   const displayStatus = online ? status : "Offline";
 
@@ -164,7 +166,7 @@ export function ConsoleApp() {
 
   const refreshSessions = useCallback(async (id: string, signal?: AbortSignal) => {
     const list = await rpc(id, { action: "sessions.list" }, signal) as Flat[];
-    setSessions(list);
+    if (!signal?.aborted) setSessions(list);
     return list;
   }, [rpc]);
 
@@ -178,6 +180,7 @@ export function ConsoleApp() {
         setMessages([]);
       }
       const transcript = await rpc(id, { action: "session.load", id: targetId }, signal) as Flat[];
+      if (signal?.aborted) return;
       setSessionId(targetId);
       setMessages(transcript);
       setMobileSessions(false);
@@ -262,7 +265,7 @@ export function ConsoleApp() {
     }
   }, [refreshSessions, rpc]);
 
-  const connect = useCallback(async (id: string) => {
+  const connect = useCallback(async (id: string, fresh = false) => {
     pollController.current?.abort();
     preparingController.current?.abort();
     connectController.current?.abort();
@@ -278,10 +281,12 @@ export function ConsoleApp() {
     setMessages([]);
     setSessions([]);
     setSessionsLoading(false);
+    setSessionsListing(false);
     setSessionId("");
     setQueue(emptyQueue);
     try {
       const metadata = await rpc(id, { action: "hello" }, controller.signal) as Flat;
+      if (controller.signal.aborted) return;
       if (metadata.protocol !== 1) throw new Error("This server does not speak zcoder protocol 1");
       setHello(metadata);
       setConnecting(false);
@@ -295,14 +300,39 @@ export function ConsoleApp() {
 
       if (metadata.sessions === true) {
         setSessionsLoading(true);
+        let loadingSession = true;
         void (async () => {
+          if (fresh) {
+            let created: Flat | undefined;
+            try {
+              created = await rpc(id, { action: "session.new" }, controller.signal) as Flat;
+            } catch (cause) {
+              // An active run owns the server's current session. Reattach to it.
+              if (!(cause instanceof RpcResponseError) || cause.status !== 409) throw cause;
+            }
+            if (controller.signal.aborted) return;
+            if (created) {
+              if (typeof created.id !== "string" || !created.id) throw new Error("Server returned an invalid session id");
+              setSessionId(created.id);
+              // A new session has no transcript. History must not delay the composer.
+              loadingSession = false;
+              setSessionsLoading(false);
+              setSessionsListing(true);
+              await refreshSessions(id, controller.signal);
+              return;
+            }
+          }
           const list = await refreshSessions(id, controller.signal);
+          if (controller.signal.aborted) return;
           const current = list.find((session) => session.current === 1);
           if (current && typeof current.id === "string") await loadSession(id, current.id, false, controller.signal);
         })().catch((cause) => {
-          if (!isAbortError(cause)) setError(cause instanceof Error ? cause.message : "Could not load sessions");
+          if (!controller.signal.aborted && !isAbortError(cause)) setError(cause instanceof Error ? cause.message : "Could not load sessions");
         }).finally(() => {
-          if (!controller.signal.aborted) setSessionsLoading(false);
+          if (!controller.signal.aborted) {
+            if (loadingSession) setSessionsLoading(false);
+            setSessionsListing(false);
+          }
         });
       }
 
@@ -380,7 +410,7 @@ export function ConsoleApp() {
           const initialId = initialServerId.current || list[0].id;
           setServerId(initialId);
           sessionStorage.setItem("zcoder-server-id", initialId);
-          void connect(initialId);
+          void connect(initialId, true);
         } else {
           setConnecting(false);
           setStatus("No servers");
@@ -649,7 +679,7 @@ export function ConsoleApp() {
                 </button>
               );
             })}
-            {sessionsLoading ? <p className="empty-list">Loading sessions…</p> : !sessions.length && !connecting ? <p className="empty-list">No sessions on this server.</p> : null}
+            {sessionsLoading || sessionsListing ? <p className="empty-list">Loading sessions…</p> : !sessions.length && !connecting ? <p className="empty-list">No sessions on this server.</p> : null}
           </nav>
           {hello ? (
             <dl className="server-facts">
