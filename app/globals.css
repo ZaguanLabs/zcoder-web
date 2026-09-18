@@ -211,6 +211,7 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .prompt-row textarea::placeholder { color: var(--dim); }
 .prompt-row button { align-self: stretch; min-width: 98px; border: 0; border-left: 1px solid var(--line); background: transparent; color: var(--green); display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 13px; font-weight: 800; }
 .prompt-row button:hover:not(:disabled) { background: var(--blue); color: var(--void); }
+.prompt-row button.stop-button { color: var(--red); }
 .keybar { display: flex; align-items: center; gap: 17px; padding: 0 8px; background: #d4d4d4; color: #292929; font-size: 11px; overflow: hidden; white-space: nowrap; }
 .keybar kbd { font: inherit; font-weight: 700; }
 .keybar-right { margin-left: auto; color: #52505a; }
