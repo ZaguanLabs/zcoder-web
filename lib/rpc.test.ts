@@ -31,3 +31,25 @@ describe("queue RPC allowlist", () => {
     await expect(runRpc(server, { action: "input.drop", session_id: "100_200", message_id: "id" })).rejects.toThrow("run closed");
   });
 });
+
+describe("cancellation RPC allowlist", () => {
+  it("forwards a scoped queued-continuation request", async () => {
+    const request = { session_id: "100_200", turn_id: "300_400", continue_queued: true };
+    await runRpc(server, { action: "cancel", ...request });
+    expect(zcoderRequest).toHaveBeenCalledExactlyOnceWith(server, "POST", "/v1/cancel", request);
+  });
+
+  it("retains ordinary cancellation without a scope", async () => {
+    await runRpc(server, { action: "cancel" });
+    expect(zcoderRequest).toHaveBeenCalledExactlyOnceWith(server, "POST", "/v1/cancel", {});
+  });
+
+  it.each([
+    { session_id: "100_200", turn_id: "", continue_queued: true },
+    { session_id: "", turn_id: "300_400", continue_queued: true },
+    { session_id: "100_200", turn_id: "300_400", continue_queued: "true" },
+  ])("rejects an invalid scoped cancellation: %j", async (request) => {
+    await expect(runRpc(server, { action: "cancel", ...request })).rejects.toMatchObject({ status: 400 });
+    expect(zcoderRequest).not.toHaveBeenCalled();
+  });
+});

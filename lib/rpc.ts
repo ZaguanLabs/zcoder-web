@@ -46,7 +46,16 @@ export async function runRpc(server: ZcoderServer, input: RpcInput): Promise<Fla
       if (!new Set(["y", "a", "n"]).has(decision)) throw new ZcoderError("Invalid approval decision", 400);
       return zcoderRequest(server, "POST", "/v1/approval", { id: text(input, "id", 100), decision });
     }
-    case "cancel": return zcoderRequest(server, "POST", "/v1/cancel", {});
+    case "cancel": {
+      const scoped = input.session_id !== undefined || input.turn_id !== undefined || input.continue_queued !== undefined;
+      if (!scoped) return zcoderRequest(server, "POST", "/v1/cancel", {});
+      if (typeof input.continue_queued !== "boolean") throw new ZcoderError("Invalid continue_queued", 400);
+      return zcoderRequest(server, "POST", "/v1/cancel", {
+        session_id: text(input, "session_id", 80),
+        turn_id: text(input, "turn_id", 100),
+        continue_queued: input.continue_queued,
+      });
+    }
     default: throw new ZcoderError("Unknown operation", 400);
   }
 }

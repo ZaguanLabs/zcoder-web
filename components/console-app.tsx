@@ -688,10 +688,7 @@ export function ConsoleApp() {
     } else if (event.key === "Escape" && busy && serverId) {
       event.preventDefault();
       if (preparingController.current) { preparingController.current.abort(); return; }
-      setStatus("Stopping");
-      void rpc(serverId, { action: "cancel" }).catch((cause) => {
-        setError(cause instanceof Error ? cause.message : "Cancellation was not acknowledged");
-      });
+      void cancelTurn();
     } else if (event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey && key === "b") {
       event.preventDefault();
       if (!event.repeat) toggleSidebar();
@@ -711,7 +708,16 @@ export function ConsoleApp() {
     if (!serverId || !busy) return;
     if (preparingController.current) { preparingController.current.abort(); return; }
     setStatus("Stopping");
-    try { await rpc(serverId, { action: "cancel" }); } catch (cause) { setError(cause instanceof Error ? cause.message : "Cancellation was not acknowledged"); }
+    const request = queueSupported && sessionId && runId
+      ? { action: "cancel", session_id: sessionId, turn_id: runId, continue_queued: true }
+      : { action: "cancel" };
+    try {
+      const result = await rpc(serverId, request) as Flat;
+      if (result.continued === true) {
+        setStatus("Working");
+        void queueClient.current?.refresh();
+      }
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Cancellation was not acknowledged"); }
   }
 
   async function logout() {

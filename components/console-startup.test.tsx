@@ -41,6 +41,7 @@ describe("console startup", () => {
         case "session.select": return Response.json({ ok: true });
         case "session.load": return Response.json([{ event: "message", seq: 1, role: "user", content: "Existing message", thinking: "" }]);
         case "input.list": return Response.json({ turn_id: turnId, pending: "" });
+        case "cancel": return Response.json({ ok: true, continued: true });
         case "events.next": return new Promise<Response>((_, reject) => {
           options?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
         });
@@ -122,6 +123,26 @@ describe("console startup", () => {
     expect(requests).toContainEqual({ action: "events.next", after: 0 });
     expect(container.querySelector(".error-strip")).toBeNull();
     expect(sendButton().textContent).toContain("Stop");
+  });
+
+  it("scopes Escape cancellation and keeps polling when queued work continues", async () => {
+    metadata.input_queue = true;
+    turnId = "running-turn";
+    create = () => Response.json({ error: "cannot create a session while a remote turn is running" }, { status: 409 });
+    await mount();
+
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    });
+
+    expect(requests).toContainEqual({
+      action: "cancel",
+      session_id: "100_200",
+      turn_id: "running-turn",
+      continue_queued: true,
+    });
+    expect(container.querySelector(".connection-state")?.textContent).toBe("Working");
+    expect(requests.filter((request) => request.action === "events.next")).toHaveLength(1);
   });
 
   it.each(["failure", "invalid receipt"])("blocks sending to the previous conversation after a creation %s", async (kind) => {

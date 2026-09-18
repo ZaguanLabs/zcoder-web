@@ -78,7 +78,7 @@ The browser saves queued requests and receipt states in local storage, scoped by
 
 On reconnect, zweb loads the selected session, reconciles saved message IDs through `/v1/input/status`, and obtains the accepting run from `/v1/input/list`. The server listing is displayed as text: it cannot safely be parsed into individual messages, and user-message events do not contain IDs. Clearing browser storage loses per-message controls for those submissions; the listing and session-wide recovery remain available.
 
-Stopping a run preserves unconsumed input. While idle in its original session, use **Resume pending input** to explicitly select that session and start `/queue resume`, or **Discard** a known pending card. Discard races are reconciled by status; they never claim to undo consumed input. Older servers keep active-run input as an unsent draft until a normal turn can start.
+On zcoder.zsh 0.17.2 or later, stopping an operation asks the server to continue any messages queued for that same run. When the server confirms continuation, zweb keeps the existing event stream and cursor open while queued work takes over. Older servers stop normally and preserve unconsumed input. While idle in its original session, use **Resume pending input** to explicitly select that session and start `/queue resume`, or **Discard** a known pending card. Discard races are reconciled by status; they never claim to undo consumed input. Servers without queue support keep active-run input as an unsent draft until a normal turn can start.
 
 ## Connecting zcoder safely
 
