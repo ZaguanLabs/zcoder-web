@@ -17,6 +17,7 @@ type Flat = Record<string, string | number | boolean | null>;
 type Approval = { id: string; command: string };
 
 const EVENT_RECONNECT_ATTEMPTS = 8;
+const TRANSCRIPT_FOLLOW_THRESHOLD = 48;
 
 function wait(milliseconds: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -131,18 +132,24 @@ export function ConsoleApp() {
   const [queue, setQueue] = useState<QueueSnapshot>(emptyQueue);
   const [inputMode, setInputMode] = useState<InputMode>("steer");
   const [inputSending, setInputSending] = useState(false);
+  const [hasNewActivity, setHasNewActivity] = useState(false);
+  const [compactDrawer, setCompactDrawer] = useState(false);
+  const [serverDetailsOpen, setServerDetailsOpen] = useState(false);
   const queueClient = useRef<InputQueue | null>(null);
   const submissionLock = useRef(false);
   const approvalLock = useRef<Approval | null>(null);
   const sidebarRef = useRef<HTMLElement>(null);
   const sidebarToggleRef = useRef<HTMLButtonElement>(null);
   const mobileSidebarToggleRef = useRef<HTMLButtonElement>(null);
+  const drawerCloseRef = useRef<HTMLButtonElement>(null);
+  const transcriptTitleRef = useRef<HTMLSpanElement>(null);
   const preparingController = useRef<AbortController | null>(null);
   const initialServerId = useRef(serverId);
   const transcriptRef = useRef<HTMLDivElement>(null);
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const connectController = useRef<AbortController | null>(null);
   const pollController = useRef<AbortController | null>(null);
+  const followingTranscript = useRef(true);
   const modelWarming = hello?.model_status === "warming";
   const modelReady = Boolean(hello) && !modelWarming && hello?.model_status !== "error";
   const queueSupported = hello?.input_queue === true && hello?.sessions === true;
@@ -153,6 +160,8 @@ export function ConsoleApp() {
     (hello?.sessions !== true || Boolean(sessionId)) &&
     (busy ? canQueue : modelReady && !approval && (!queueSupported || Boolean(sessionId) && !queue.loading && !queue.error));
   const displayStatus = online ? status : "Offline";
+  const selectedSession = sessions.find((session) => String(session.id) === sessionId);
+  const selectedSessionTitle = selectedSession ? String(selectedSession.title || "Untitled session") : sessionId ? "Current session" : "No session";
 
   const rpc = useCallback(async (id: string, body: Record<string, unknown>, signal?: AbortSignal) => {
     const response = await fetch(`/api/servers/${encodeURIComponent(id)}/rpc`, {
@@ -175,6 +184,8 @@ export function ConsoleApp() {
     try {
       if (select) {
         await rpc(id, { action: "session.select", id: targetId }, signal);
+        followingTranscript.current = true;
+        setHasNewActivity(false);
         setSessionId(targetId);
         setQueue(emptyQueue);
         setMessages([]);
@@ -278,6 +289,8 @@ export function ConsoleApp() {
     setError("");
     setStatus("Connecting");
     setHello(null);
+    followingTranscript.current = true;
+    setHasNewActivity(false);
     setMessages([]);
     setSessions([]);
     setSessionsLoading(false);
@@ -431,9 +444,38 @@ export function ConsoleApp() {
   }, [connect]);
 
   useEffect(() => {
+    const mobile = window.matchMedia("(max-width: 860px)");
+    const shortMobile = window.matchMedia("(max-width: 860px) and (max-height: 620px)");
+    const updateMobile = () => {
+      if (sidebarRef.current?.contains(document.activeElement)) {
+        const target = mobile.matches ? mobileSidebarToggleRef : sidebarToggleRef;
+        requestAnimationFrame(() => target.current?.focus({ preventScroll: true }));
+      }
+      if (!mobile.matches) setMobileSessions(false);
+    };
+    const updateCompact = () => setCompactDrawer(shortMobile.matches);
+    setCompactDrawer(shortMobile.matches);
+    if (!mobile.matches) setMobileSessions(false);
+    mobile.addEventListener?.("change", updateMobile);
+    shortMobile.addEventListener?.("change", updateCompact);
+    return () => {
+      mobile.removeEventListener?.("change", updateMobile);
+      shortMobile.removeEventListener?.("change", updateCompact);
+    };
+  }, []);
+
+  useEffect(() => {
     const element = transcriptRef.current;
     if (!element) return;
-    requestAnimationFrame(() => { element.scrollTop = element.scrollHeight; });
+    const shouldFollow = followingTranscript.current;
+    requestAnimationFrame(() => {
+      if (shouldFollow) {
+        element.scrollTop = element.scrollHeight;
+        setHasNewActivity(false);
+      } else {
+        setHasNewActivity(true);
+      }
+    });
   }, [messages, approval]);
 
   useEffect(() => {
@@ -479,21 +521,6 @@ export function ConsoleApp() {
     return () => window.removeEventListener("keydown", routeTypingToPrompt);
   }, [canPrompt]);
 
-  useEffect(() => {
-    if (!busy || !serverId) return;
-    function stopOnEscape(event: globalThis.KeyboardEvent) {
-      if (event.key !== "Escape") return;
-      event.preventDefault();
-      if (preparingController.current) { preparingController.current.abort(); return; }
-      setStatus("Stopping");
-      void rpc(serverId, { action: "cancel" }).catch((cause) => {
-        setError(cause instanceof Error ? cause.message : "Cancellation was not acknowledged");
-      });
-    }
-    window.addEventListener("keydown", stopOnEscape);
-    return () => window.removeEventListener("keydown", stopOnEscape);
-  }, [busy, rpc, serverId]);
-
   async function startTurn(value: string, resume = false) {
     if (!serverId || busy || submissionLock.current) return;
     submissionLock.current = true;
@@ -505,6 +532,8 @@ export function ConsoleApp() {
     try {
       if (resume) await rpc(serverId, { action: "session.select", id: sessionId }, controller.signal);
       if (!resume) {
+        followingTranscript.current = true;
+        setHasNewActivity(false);
         setMessages((current) => [...current, { event: "message", role: "user", content: value, thinking: "", time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) }]);
         setPrompt((current) => current === value ? "" : current);
       }
@@ -555,6 +584,7 @@ export function ConsoleApp() {
 
   async function createSession() {
     if (!serverId || busy || sessionsLoading || inputSending || hello?.sessions !== true) return;
+    const mobile = window.matchMedia("(max-width: 860px)").matches;
     setError("");
     setSessionsLoading(true);
     try {
@@ -562,6 +592,7 @@ export function ConsoleApp() {
       if (typeof result.id !== "string") throw new Error("Server returned an invalid session id");
       await refreshSessions(serverId);
       await loadSession(serverId, result.id);
+      if (mobile) requestAnimationFrame(() => transcriptTitleRef.current?.focus({ preventScroll: true }));
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not create a session"); }
     finally { setSessionsLoading(false); }
   }
@@ -591,17 +622,77 @@ export function ConsoleApp() {
 
   function toggleSidebar() {
     const mobile = window.matchMedia("(max-width: 860px)").matches;
-    if (sidebarRef.current?.contains(document.activeElement)) {
-      (mobile ? mobileSidebarToggleRef : sidebarToggleRef).current?.focus({ preventScroll: true });
+    if (mobile) {
+      if (mobileSessions) {
+        setMobileSessions(false);
+        requestAnimationFrame(() => mobileSidebarToggleRef.current?.focus({ preventScroll: true }));
+      } else {
+        setMobileSessions(true);
+        requestAnimationFrame(() => drawerCloseRef.current?.focus({ preventScroll: true }));
+      }
+      return;
     }
-    if (mobile) setMobileSessions((open) => !open);
-    else setSidebarHidden((hidden) => !hidden);
+    if (sidebarRef.current?.contains(document.activeElement)) sidebarToggleRef.current?.focus({ preventScroll: true });
+    setSidebarHidden((hidden) => !hidden);
+  }
+
+  function closeMobileSessions(restoreFocus = true) {
+    setMobileSessions(false);
+    if (restoreFocus) requestAnimationFrame(() => mobileSidebarToggleRef.current?.focus({ preventScroll: true }));
+  }
+
+  function handleDrawerKeyDown(event: KeyboardEvent<HTMLElement>) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      closeMobileSessions();
+      return;
+    }
+    if (event.key !== "Tab") return;
+    const controls = Array.from(sidebarRef.current?.querySelectorAll<HTMLElement>("button:not([disabled]), select:not([disabled]), a[href], [tabindex]:not([tabindex='-1'])") ?? [])
+      .filter((control) => !control.closest("[hidden]"));
+    const first = controls[0];
+    const last = controls.at(-1);
+    if (!first || !last) return;
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
+
+  function updateTranscriptFollow() {
+    const element = transcriptRef.current;
+    if (!element) return;
+    const following = element.scrollHeight - element.scrollTop - element.clientHeight <= TRANSCRIPT_FOLLOW_THRESHOLD;
+    followingTranscript.current = following;
+    if (following) setHasNewActivity(false);
+  }
+
+  function jumpToLatestActivity() {
+    const element = transcriptRef.current;
+    if (!element) return;
+    followingTranscript.current = true;
+    element.scrollTop = element.scrollHeight;
+    setHasNewActivity(false);
   }
 
   const handleShortcut = useEffectEvent((event: globalThis.KeyboardEvent) => {
     if (event.defaultPrevented || event.isComposing || event.getModifierState("AltGraph")) return;
     const key = event.key.toLowerCase();
-    if (event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey && key === "b") {
+    if (event.key === "Escape" && mobileSessions) {
+      event.preventDefault();
+      closeMobileSessions();
+    } else if (event.key === "Escape" && busy && serverId) {
+      event.preventDefault();
+      if (preparingController.current) { preparingController.current.abort(); return; }
+      setStatus("Stopping");
+      void rpc(serverId, { action: "cancel" }).catch((cause) => {
+        setError(cause instanceof Error ? cause.message : "Cancellation was not acknowledged");
+      });
+    } else if (event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey && key === "b") {
       event.preventDefault();
       if (!event.repeat) toggleSidebar();
     } else if (approval && event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey && (key === "y" || key === "n")) {
@@ -654,7 +745,7 @@ export function ConsoleApp() {
 
       <div className="mobile-bar">
         <button ref={mobileSidebarToggleRef} type="button" className="mobile-session-trigger" aria-expanded={mobileSessions} aria-controls="session-drawer" aria-keyshortcuts="Control+b" title="Toggle sessions (Ctrl+B)" onClick={toggleSidebar}>
-          <Icon name="server" /> <span>{sessions.length}</span>
+          <Icon name="server" /> <span className="mobile-sessions-label">Sessions</span> <span className="mobile-session-count">{sessions.length}</span>
         </button>
         <label className="mobile-server-switcher">
           <span className="sr-only">Server</span>
@@ -665,15 +756,20 @@ export function ConsoleApp() {
       </div>
 
       <div className={`workbench ${sidebarHidden ? "sidebar-hidden" : ""}`}>
-        <button type="button" className={`session-backdrop ${mobileSessions ? "visible" : ""}`} aria-label="Close sessions" tabIndex={mobileSessions ? 0 : -1} onClick={() => setMobileSessions(false)} />
-        <aside ref={sidebarRef} id="session-drawer" className={`session-pane ${mobileSessions ? "mobile-open" : ""}`} aria-label="Remote sessions">
-          <div className="pane-title"><span><span className="sessions-label">Sessions</span> ({sessions.length})</span><button type="button" className="drawer-close" aria-label="Close sessions" onClick={() => setMobileSessions(false)}>×</button></div>
+        <button type="button" className={`session-backdrop ${mobileSessions ? "visible" : ""}`} aria-label="Close sessions" tabIndex={-1} onClick={() => closeMobileSessions()} />
+        <aside ref={sidebarRef} id="session-drawer" className={`session-pane ${mobileSessions ? "mobile-open" : ""}`} aria-labelledby="session-drawer-title" role={mobileSessions ? "dialog" : undefined} aria-modal={mobileSessions ? true : undefined} onKeyDown={handleDrawerKeyDown}>
+          <div className="pane-title"><span id="session-drawer-title"><span className="sessions-label">Sessions</span> ({sessions.length})</span><button ref={drawerCloseRef} type="button" className="drawer-close" aria-label="Close sessions" onClick={() => closeMobileSessions()}>×</button></div>
           <button type="button" className="new-session" disabled={busy || inputSending || sessionsLoading || hello?.sessions !== true} onClick={createSession}><Icon name="plus" /> New session</button>
           <nav aria-label="Remote sessions">
             {sessions.map((session) => {
               const id = String(session.id);
               return (
-                <button type="button" key={id} className={sessionId === id ? "active" : ""} aria-current={sessionId === id ? "true" : undefined} title={String(session.title || "Untitled session")} disabled={busy || inputSending || sessionsLoading} onClick={() => void loadSession(serverId, id, true).catch((cause) => setError(cause instanceof Error ? cause.message : "Could not select session"))}>
+                <button type="button" key={id} className={sessionId === id ? "active" : ""} aria-current={sessionId === id ? "true" : undefined} title={String(session.title || "Untitled session")} disabled={busy || inputSending || sessionsLoading} onClick={() => {
+                  const mobile = window.matchMedia("(max-width: 860px)").matches;
+                  void loadSession(serverId, id, true).then(() => {
+                    if (mobile) requestAnimationFrame(() => transcriptTitleRef.current?.focus({ preventScroll: true }));
+                  }).catch((cause) => setError(cause instanceof Error ? cause.message : "Could not select session"));
+                }}>
                   <span className="session-rail" aria-hidden="true">{sessionId === id ? "▸" : ""}</span>
                   <span className="session-text"><strong>{String(session.title || "Untitled session")}</strong><small>{String(session.model || "Model unknown")}</small></span>
                 </button>
@@ -682,19 +778,22 @@ export function ConsoleApp() {
             {sessionsLoading || sessionsListing ? <p className="empty-list">Loading sessions…</p> : !sessions.length && !connecting ? <p className="empty-list">No sessions on this server.</p> : null}
           </nav>
           {hello ? (
-            <dl className="server-facts">
+            <section className={`server-details ${serverDetailsOpen ? "open" : ""}`}>
+              <button type="button" className="server-details-toggle" aria-expanded={serverDetailsOpen} aria-controls="server-facts" onClick={() => setServerDetailsOpen((open) => !open)}>Server details <span aria-hidden="true">{serverDetailsOpen ? "−" : "+"}</span></button>
+              <dl id="server-facts" className="server-facts" hidden={compactDrawer && !serverDetailsOpen}>
               <div><dt>Server</dt><dd><select className="mobile-server-select" value={serverId} aria-label="Active server" disabled={busy || inputSending || sessionsLoading} onChange={(event) => { const id = event.target.value; sessionStorage.setItem("zcoder-server-id", id); setServerId(id); void connect(id); }}>{servers.map((server) => <option key={server.id} value={server.id}>{server.name}</option>)}</select></dd></div>
               <div><dt>Project</dt><dd className="workspace-name" title={String(hello.workspace)}>{String(hello.workspace)}</dd></div>
               <div><dt>Model</dt><dd className="model-name" title={String(hello.model)}>{String(hello.model)}</dd></div>
               <div><dt>Profile</dt><dd>{String(hello.profile)}</dd></div>
               <div><dt>Shell</dt><dd className={`policy-${hello.command_policy}`}>{String(hello.command_policy)}</dd></div>
-            </dl>
+              </dl>
+            </section>
           ) : null}
         </aside>
 
-        <section className="transcript-pane" aria-labelledby="transcript-title">
-          <div className="pane-title transcript-title"><span id="transcript-title">Agent transcript ({messages.length} events)</span></div>
-          <div className="transcript" ref={transcriptRef} aria-live="polite">
+        <section className="transcript-pane" aria-labelledby="transcript-title" inert={mobileSessions ? true : undefined}>
+          <div className="pane-title transcript-title"><span ref={transcriptTitleRef} id="transcript-title" className="transcript-heading" tabIndex={-1} aria-label={`Agent transcript, session ${selectedSessionTitle}, ${messages.length} events`}><span>Agent transcript</span> <span className="transcript-event-count">({messages.length} events)</span><span className="transcript-session-title">/ {selectedSessionTitle}</span></span></div>
+          <div className="transcript" ref={transcriptRef} aria-live="polite" onScroll={updateTranscriptFollow}>
             {connecting ? <div className="loading-state"><span /><p>Establishing secure gateway</p></div> : null}
             {!connecting && !hello ? (
               <div className="empty-state"><Icon name="server" size={28} /><h2>{servers.length ? "Server unavailable" : "No servers configured"}</h2><p>{servers.length ? "Check the tunnel, zcoder process, and token." : "Add ZCODER_SERVERS_JSON to .env, then restart zweb."}</p>{error ? <code>{error}</code> : null}{servers.length && serverId ? <button type="button" className="retry-button" onClick={() => void connect(serverId)}>Reconnect</button> : null}</div>
@@ -708,6 +807,7 @@ export function ConsoleApp() {
             ) : null}
             {messages.map((message, index) => <TranscriptMessage key={`${String(message.seq ?? "local")}-${index}`} event={message} />)}
           </div>
+          {hasNewActivity ? <button type="button" className="transcript-jump" onClick={jumpToLatestActivity}>Jump to latest activity</button> : null}
           {error && hello ? <div className="error-strip" role="alert"><strong>!</strong><span>{error} <button type="button" onClick={() => void connect(serverId)}>Reconnect</button></span><button type="button" onClick={() => setError("")} aria-label="Dismiss error">×</button></div> : null}
           {approval ? (
             <section className="approval-bar" aria-labelledby="approval-title">
@@ -721,7 +821,7 @@ export function ConsoleApp() {
           ) : null}
         </section>
       </div>
-      <form className="prompt-box" onSubmit={submitPrompt}>
+      <form className="prompt-box" onSubmit={submitPrompt} inert={mobileSessions ? true : undefined}>
         {queueSupported && sessionId ? (
           <details className="queue-panel" open={queue.records.some((record) => ["uncertain", "accepted"].includes(record.state)) || Boolean(queue.pending) || Boolean(queue.error)}>
             <summary>Queued input · {queue.records.filter((record) => record.state === "accepted").length} pending from this browser</summary>
