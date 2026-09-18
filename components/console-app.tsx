@@ -75,6 +75,37 @@ function stripAnsi(text: string): string {
   return text.replace(/\u001b\[[0-9;]*m/g, "");
 }
 
+const CopyButton = memo(function CopyButton({ markdown }: { markdown: string }) {
+  const [state, setState] = useState<"idle" | "copied" | "error">("idle");
+  const resetTimer = useRef<number | null>(null);
+
+  useEffect(() => () => {
+    if (resetTimer.current !== null) window.clearTimeout(resetTimer.current);
+  }, []);
+
+  async function copy() {
+    if (resetTimer.current !== null) window.clearTimeout(resetTimer.current);
+    try {
+      await navigator.clipboard.writeText(markdown);
+      setState("copied");
+    } catch {
+      setState("error");
+    }
+    resetTimer.current = window.setTimeout(() => setState("idle"), 1_600);
+  }
+
+  return (
+    <button
+      type="button"
+      className={`message-copy copy-${state}`}
+      onClick={() => void copy()}
+      aria-label="Copy Markdown response"
+    >
+      {state === "copied" ? "Copied" : state === "error" ? "Copy failed" : "Copy"}
+    </button>
+  );
+});
+
 const TranscriptMessage = memo(function TranscriptMessage({ event }: { event: Flat }) {
   const [reasoningOpen, setReasoningOpen] = useState(event.reasoning_open === 1);
   const thinking = typeof event.thinking === "string" ? event.thinking : "";
@@ -103,6 +134,11 @@ const TranscriptMessage = memo(function TranscriptMessage({ event }: { event: Fl
         </div>
       ) : event.content ? (
         <div className="message-content"><MarkdownContent>{String(event.content)}</MarkdownContent></div>
+      ) : null}
+      {role === "assistant" && typeof event.content === "string" && event.content ? (
+        <footer className="message-actions">
+          <CopyButton markdown={event.content} />
+        </footer>
       ) : null}
     </article>
   );

@@ -133,6 +133,11 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .message-content-pre { padding: 10px 14px 14px; color: var(--blue); font-size: 13px; line-height: 1.55; }
 .message-tool .message-content { color: var(--blue); }
 .message-pre { margin: 0; white-space: pre-wrap; word-break: break-all; font-family: inherit; font-size: inherit; color: inherit; }
+.message-actions { display: flex; justify-content: flex-end; padding: 0 14px 10px; }
+.message-copy { min-height: 28px; border: 1px solid var(--line-soft); background: transparent; color: var(--muted); padding: 4px 8px; font-size: 11px; line-height: 1; }
+.message-copy:hover { border-color: var(--blue); background: var(--panel); color: var(--blue); }
+.message-copy.copy-copied { border-color: var(--green); color: var(--green); }
+.message-copy.copy-error { border-color: var(--red); color: var(--red); }
 .markdown > :first-child { margin-top: 0; }
 .markdown > :last-child { margin-bottom: 0; }
 .markdown p { margin: 0 0 .85em; }
@@ -333,6 +338,8 @@ button:disabled { cursor: not-allowed; opacity: .45; }
   .transcript { padding: 0; }
   .message { margin-bottom: 6px; }
   .message-content { font-size: 15px; }
+  .message-actions { padding: 0 10px 10px; }
+  .message-copy { min-height: 36px; padding: 6px 10px; }
   .approval-bar { max-height: 48dvh; overflow-y: auto; grid-template-columns: 1fr; padding: 12px max(12px, env(safe-area-inset-right)) 12px max(12px, env(safe-area-inset-left)); }
   .approval-actions button { flex: 1; min-height: 44px; }
   .mobile-server-select { display: block; }

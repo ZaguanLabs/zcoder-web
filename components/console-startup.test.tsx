@@ -15,6 +15,7 @@ describe("console startup", () => {
   let metadata: Record<string, unknown>;
   let create: () => Response | Promise<Response>;
   let list: () => Response | Promise<Response>;
+  let transcript: Record<string, unknown>[];
   let turnId: string;
   const history = [{ id: "100_200", title: "Previous conversation", current: 1 }];
 
@@ -24,6 +25,7 @@ describe("console startup", () => {
     metadata = { protocol: 1, sessions: true, model: "Test", profile: "coding" };
     create = () => Response.json({ id: "100_201" });
     list = () => Response.json(history);
+    transcript = [{ event: "message", seq: 1, role: "user", content: "Existing message", thinking: "" }];
     sessionStorage.clear();
     localStorage.clear();
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -39,7 +41,7 @@ describe("console startup", () => {
         case "session.new": return create();
         case "sessions.list": return list();
         case "session.select": return Response.json({ ok: true });
-        case "session.load": return Response.json([{ event: "message", seq: 1, role: "user", content: "Existing message", thinking: "" }]);
+        case "session.load": return Response.json(transcript);
         case "input.list": return Response.json({ turn_id: turnId, pending: "" });
         case "cancel": return Response.json({ ok: true, continued: true });
         case "events.next": return new Promise<Response>((_, reject) => {
@@ -98,6 +100,22 @@ describe("console startup", () => {
     expect(requests).toContainEqual({ action: "session.select", id: "100_200" });
     expect(requests).toContainEqual({ action: "session.load", id: "100_200" });
     expect(container.textContent).toContain("Agent transcript (1 events)");
+  });
+
+  it("copies the raw Markdown for assistant responses", async () => {
+    const markdown = "## Result\n\n- **done**";
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    transcript = [{ event: "message", seq: 2, role: "assistant", content: markdown, thinking: "" }];
+    await mount();
+
+    await act(async () => container.querySelector<HTMLButtonElement>(".session-pane nav button")!.click());
+    const copy = container.querySelector<HTMLButtonElement>(".message-copy")!;
+    expect(copy.textContent).toBe("Copy");
+    await act(async () => copy.click());
+
+    expect(writeText).toHaveBeenCalledWith(markdown);
+    expect(copy.textContent).toBe("Copied");
   });
 
   it("reconnects to the current conversation without creating another", async () => {
