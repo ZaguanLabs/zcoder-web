@@ -626,8 +626,14 @@ export function ConsoleApp() {
     try {
       const result = await rpc(serverId, { action: "session.new" }) as Flat;
       if (typeof result.id !== "string") throw new Error("Server returned an invalid session id");
+      setSessionId(result.id);
+      // A new session has no transcript. History must not delay the composer.
+      setMessages([]);
+      setQueue(emptyQueue);
+      followingTranscript.current = true;
+      setHasNewActivity(false);
+      setMobileSessions(false);
       await refreshSessions(serverId);
-      await loadSession(serverId, result.id);
       if (mobile) requestAnimationFrame(() => transcriptTitleRef.current?.focus({ preventScroll: true }));
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not create a session"); }
     finally { setSessionsLoading(false); }
