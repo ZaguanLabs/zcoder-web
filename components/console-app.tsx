@@ -147,7 +147,7 @@ const TranscriptMessage = memo(function TranscriptMessage({ event }: { event: Fl
 export function ConsoleApp() {
   const router = useRouter();
   const [servers, setServers] = useState<ServerSummary[]>([]);
-  const [serverId, setServerId] = useState(() => typeof window === "undefined" ? "" : sessionStorage.getItem("zcoder-server-id") ?? "");
+  const [serverId, setServerId] = useState(() => typeof window === "undefined" ? "" : localStorage.getItem("zcoder-server-id") ?? "");
   const [hello, setHello] = useState<Flat | null>(null);
   const [sessions, setSessions] = useState<Flat[]>([]);
   const [sessionId, setSessionId] = useState("");
@@ -458,7 +458,7 @@ export function ConsoleApp() {
         if (list[0]) {
           const initialId = initialServerId.current || list[0].id;
           setServerId(initialId);
-          sessionStorage.setItem("zcoder-server-id", initialId);
+          localStorage.setItem("zcoder-server-id", initialId);
           void connect(initialId, true);
         } else {
           setConnecting(false);
@@ -777,7 +777,7 @@ export function ConsoleApp() {
         <div className="active-model" title={hello ? String(hello.model) : undefined}>{hello ? String(hello.model) : "No model connected"}</div>
         <div className="server-switcher">
           <label htmlFor="server-select">Server</label>
-          <select id="server-select" value={serverId} disabled={busy || inputSending || sessionsLoading} onChange={(event) => { const id = event.target.value; sessionStorage.setItem("zcoder-server-id", id); setServerId(id); void connect(id); }}>
+          <select id="server-select" value={serverId} disabled={busy || inputSending || sessionsLoading} onChange={(event) => { const id = event.target.value; localStorage.setItem("zcoder-server-id", id); setServerId(id); void connect(id); }}>
             {servers.map((server) => <option key={server.id} value={server.id}>{server.name}</option>)}
           </select>
         </div>
@@ -791,7 +791,7 @@ export function ConsoleApp() {
         </button>
         <label className="mobile-server-switcher">
           <span className="sr-only">Server</span>
-          <select value={serverId} aria-label="Active server" disabled={busy || inputSending || sessionsLoading} onChange={(event) => { const id = event.target.value; sessionStorage.setItem("zcoder-server-id", id); setMobileSessions(false); setServerId(id); void connect(id); }}>
+          <select value={serverId} aria-label="Active server" disabled={busy || inputSending || sessionsLoading} onChange={(event) => { const id = event.target.value; localStorage.setItem("zcoder-server-id", id); setMobileSessions(false); setServerId(id); void connect(id); }}>
             {servers.map((server) => <option key={server.id} value={server.id}>{server.name}</option>)}
           </select>
         </label>
@@ -823,7 +823,7 @@ export function ConsoleApp() {
             <section className={`server-details ${serverDetailsOpen ? "open" : ""}`}>
               <button type="button" className="server-details-toggle" aria-expanded={serverDetailsOpen} aria-controls="server-facts" onClick={() => setServerDetailsOpen((open) => !open)}>Server details <span aria-hidden="true">{serverDetailsOpen ? "−" : "+"}</span></button>
               <dl id="server-facts" className="server-facts" hidden={compactDrawer && !serverDetailsOpen}>
-              <div><dt>Server</dt><dd><select className="mobile-server-select" value={serverId} aria-label="Active server" disabled={busy || inputSending || sessionsLoading} onChange={(event) => { const id = event.target.value; sessionStorage.setItem("zcoder-server-id", id); setServerId(id); void connect(id); }}>{servers.map((server) => <option key={server.id} value={server.id}>{server.name}</option>)}</select></dd></div>
+              <div><dt>Server</dt><dd><select className="mobile-server-select" value={serverId} aria-label="Active server" disabled={busy || inputSending || sessionsLoading} onChange={(event) => { const id = event.target.value; localStorage.setItem("zcoder-server-id", id); setServerId(id); void connect(id); }}>{servers.map((server) => <option key={server.id} value={server.id}>{server.name}</option>)}</select></dd></div>
               <div><dt>Project</dt><dd className="workspace-name" title={String(hello.workspace)}>{String(hello.workspace)}</dd></div>
               <div><dt>Model</dt><dd className="model-name" title={String(hello.model)}>{String(hello.model)}</dd></div>
               <div><dt>Profile</dt><dd>{String(hello.profile)}</dd></div>
