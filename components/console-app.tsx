@@ -4,8 +4,9 @@ import { FormEvent, KeyboardEvent, memo, useCallback, useEffect, useEffectEvent,
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icons";
-import { isTransientRpcError, readRpcJson, RpcResponseError } from "@/lib/client-rpc";
+import { eventRetryDelayMs, isTransientRpcError, readRpcJson, RpcResponseError } from "@/lib/client-rpc";
 import { emptyQueue, InputQueue, type InputMode, type QueueSnapshot } from "@/lib/input-queue";
+import { isPageVisible, onPageVisible, waitForPageVisible } from "@/lib/visibility";
 
 const MarkdownContent = dynamic(
   () => import("@/components/markdown-content").then((module) => module.MarkdownContent),
@@ -18,6 +19,8 @@ type Approval = { id: string; command: string };
 
 const EVENT_RECONNECT_ATTEMPTS = 8;
 const TRANSCRIPT_FOLLOW_THRESHOLD = 48;
+/** Long enough that alt-tabbing through windows is not a session request per tab stop. */
+const SESSIONS_REREAD_MIN_INTERVAL_MS = 10_000;
 
 function wait(milliseconds: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -185,6 +188,9 @@ export function ConsoleApp() {
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const connectController = useRef<AbortController | null>(null);
   const pollController = useRef<AbortController | null>(null);
+  // Set when the event stream gave up, so returning to the app can recover it.
+  const streamLost = useRef(false);
+  const lastSessionsReadAt = useRef(0);
   const followingTranscript = useRef(true);
   const modelWarming = hello?.model_status === "warming";
   const modelReady = Boolean(hello) && !modelWarming && hello?.model_status !== "error";
@@ -239,6 +245,7 @@ export function ConsoleApp() {
     pollController.current?.abort();
     const controller = new AbortController();
     pollController.current = controller;
+    streamLost.current = false;
     let cursor = 0;
     let reconnectAttempts = 0;
     let transcriptDirty = false;
@@ -250,6 +257,13 @@ export function ConsoleApp() {
     };
     try {
       while (!controller.signal.aborted) {
+        // A hidden page polls nothing. The event cursor is durable upstream, so
+        // the run resumes from the seq it stopped at instead of losing events.
+        if (!isPageVisible()) {
+          await waitForPageVisible(controller.signal);
+          // Coming back is a fresh start, not another failed attempt.
+          reconnectAttempts = 0;
+        }
         let event: Flat;
         try {
           event = await rpc(id, { action: "events.next", after: cursor }, controller.signal) as Flat;
@@ -257,9 +271,9 @@ export function ConsoleApp() {
         } catch (cause) {
           if (isAbortError(cause)) throw cause;
           if (!isTransientRpcError(cause) || reconnectAttempts >= EVENT_RECONNECT_ATTEMPTS) throw cause;
-          reconnectAttempts += 1;
           setStatus("Reconnecting");
-          await wait(Math.min(250 * reconnectAttempts, 1_500), controller.signal);
+          await wait(eventRetryDelayMs(reconnectAttempts), controller.signal);
+          reconnectAttempts += 1;
           continue;
         }
         if (!event || typeof event !== "object") throw new Error("Malformed remote event");
@@ -304,6 +318,7 @@ export function ConsoleApp() {
       }
     } catch (cause) {
       if (isAbortError(cause)) return;
+      streamLost.current = true;
       setError(cause instanceof Error ? cause.message : "Event stream failed");
       setBusy(false);
       setStatus("Connection lost");
@@ -318,6 +333,7 @@ export function ConsoleApp() {
     connectController.current?.abort();
     const controller = new AbortController();
     connectController.current = controller;
+    streamLost.current = false;
     setBusy(false);
     setRunId("");
     setApproval(null);
@@ -427,21 +443,29 @@ export function ConsoleApp() {
       queueMicrotask(() => { if (!disposed) setQueue({ ...emptyQueue, error: cause instanceof Error ? cause.message : "Could not restore queued input" }); });
       return () => { disposed = true; };
     }
+    let inspecting = false;
     const inspect = async (initial = false) => {
-      await client.refresh();
-      if (disposed) return;
-      if (initial && client.snapshot.turnId && !pollController.current) {
-        setRunId(client.snapshot.turnId);
-        setBusy(true);
-        setStatus("Working");
-        void pollEvents(serverId, sessionId, true, client.snapshot.turnId, true);
-      }
-      const pending = client.snapshot.records.some((record) => ["accepted", "uncertain"].includes(record.state));
-      timer = setTimeout(() => void inspect(), client.snapshot.turnId || pending ? 2_000 : 10_000);
+      inspecting = true;
+      try {
+        await client.refresh();
+        if (disposed) return;
+        if (initial && client.snapshot.turnId && !pollController.current) {
+          setRunId(client.snapshot.turnId);
+          setBusy(true);
+          setStatus("Working");
+          void pollEvents(serverId, sessionId, true, client.snapshot.turnId, true);
+        }
+        const pending = client.snapshot.records.some((record) => ["accepted", "uncertain"].includes(record.state));
+        // Armed only while the page is showing. A hidden tab costs the upstream
+        // nothing, and the checks it missed collapse into the one made on return.
+        if (isPageVisible()) timer = setTimeout(() => void inspect(), client.snapshot.turnId || pending ? 2_000 : 10_000);
+      } finally { inspecting = false; }
     };
     void inspect(true);
+    const stopWatchingVisibility = onPageVisible(() => { if (!disposed && !inspecting) void inspect(); });
     return () => {
       disposed = true;
+      stopWatchingVisibility();
       controller.abort();
       clearTimeout(timer);
       if (queueClient.current === client) queueClient.current = null;
@@ -524,6 +548,21 @@ export function ConsoleApp() {
       window.removeEventListener("offline", update);
     };
   }, []);
+
+  // Coming back to the app is one moment that deserves a read. The stream may
+  // have exhausted its retries while the page was frozen, and the session list
+  // has been sitting still for as long as the window was hidden.
+  useEffect(() => onPageVisible(() => {
+    if (!serverId || connecting) return;
+    if (streamLost.current) {
+      void connect(serverId);
+      return;
+    }
+    const now = Date.now();
+    if (now - lastSessionsReadAt.current < SESSIONS_REREAD_MIN_INTERVAL_MS) return;
+    lastSessionsReadAt.current = now;
+    refreshSessions(serverId).catch(() => {});
+  }), [connect, connecting, refreshSessions, serverId]);
 
   useEffect(() => {
     if (!canPrompt) return;

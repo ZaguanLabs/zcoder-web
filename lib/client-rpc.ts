@@ -32,3 +32,16 @@ export async function readRpcJson<T = unknown>(response: Response): Promise<T> {
 export function isTransientRpcError(error: unknown): boolean {
   return error instanceof TypeError || (error instanceof RpcResponseError && error.retryable);
 }
+
+/**
+ * Retry ladder for a lost event stream, indexed by how many attempts have
+ * already failed. A zcoder restart holds the upstream down for roughly fifteen
+ * seconds, and a flat short delay stops trying before it comes back; climbing
+ * instead lands the later attempts after the restart has finished.
+ */
+const EVENT_RETRY_DELAYS_MS = [250, 500, 1_000, 2_000, 4_000];
+
+export function eventRetryDelayMs(failureCount: number): number {
+  const index = Math.min(Math.max(failureCount, 0), EVENT_RETRY_DELAYS_MS.length - 1);
+  return EVENT_RETRY_DELAYS_MS[index] ?? 4_000;
+}

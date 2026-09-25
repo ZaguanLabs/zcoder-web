@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isTransientRpcError, readRpcJson, RpcResponseError } from "./client-rpc";
+import { eventRetryDelayMs, isTransientRpcError, readRpcJson, RpcResponseError } from "./client-rpc";
 
 describe("readRpcJson", () => {
   it("reads successful JSON responses", async () => {
@@ -29,5 +29,20 @@ describe("isTransientRpcError", () => {
     expect(isTransientRpcError(new TypeError("Failed to fetch"))).toBe(true);
     expect(isTransientRpcError(new RpcResponseError("Unavailable", true))).toBe(true);
     expect(isTransientRpcError(new RpcResponseError("Unauthorized"))).toBe(false);
+  });
+});
+
+describe("eventRetryDelayMs", () => {
+  it("climbs and then holds, so the attempts outlast an upstream restart", () => {
+    const ladder = Array.from({ length: 8 }, (_, attempt) => eventRetryDelayMs(attempt));
+
+    expect(ladder).toEqual([250, 500, 1_000, 2_000, 4_000, 4_000, 4_000, 4_000]);
+    // A zcoder restart holds the upstream down for roughly fifteen seconds.
+    expect(ladder.reduce((total, delay) => total + delay, 0)).toBeGreaterThan(15_000);
+  });
+
+  it("clamps attempt counts outside the ladder", () => {
+    expect(eventRetryDelayMs(-1)).toBe(250);
+    expect(eventRetryDelayMs(99)).toBe(4_000);
   });
 });
