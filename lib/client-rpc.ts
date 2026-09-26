@@ -12,7 +12,8 @@ function responseError(data: unknown, status: number): string {
   return `Request failed (${status})`;
 }
 
-export async function readRpcJson<T = unknown>(response: Response): Promise<T> {
+export async function readRpcJson<T = unknown>(response: Response, onUnauthorized?: () => void): Promise<T> {
+  if (response.status === 401 && response.headers.get("X-Zweb-Auth") === "required") onUnauthorized?.();
   const body = await response.text();
   let data: unknown;
 

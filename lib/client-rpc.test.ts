@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { eventRetryDelayMs, isTransientRpcError, readRpcJson, RpcResponseError } from "./client-rpc";
 
 describe("readRpcJson", () => {
@@ -7,8 +7,22 @@ describe("readRpcJson", () => {
   });
 
   it("preserves JSON error messages", async () => {
+    const onUnauthorized = vi.fn();
     await expect(readRpcJson(Response.json({ error: "Authentication required" }, { status: 401 })))
-      .rejects.toMatchObject({ message: "Authentication required", retryable: false });
+      .rejects.toMatchObject({ message: "Authentication required", retryable: false, status: 401 });
+    await expect(readRpcJson(Response.json({ error: "Authentication required" }, {
+      status: 401,
+      headers: { "X-Zweb-Auth": "required" },
+    }), onUnauthorized))
+      .rejects.toMatchObject({ status: 401 });
+    expect(onUnauthorized).toHaveBeenCalledOnce();
+  });
+
+  it("does not confuse an upstream 401 with an expired zweb session", async () => {
+    const onUnauthorized = vi.fn();
+    await expect(readRpcJson(Response.json({ error: "Wrong zcoder bearer token" }, { status: 401 }), onUnauthorized))
+      .rejects.toMatchObject({ message: "Wrong zcoder bearer token", status: 401 });
+    expect(onUnauthorized).not.toHaveBeenCalled();
   });
 
   it("turns a gateway HTML response into a retryable restart error", async () => {

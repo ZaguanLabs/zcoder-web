@@ -73,4 +73,15 @@ describe("visibility gating", () => {
     setVisibility("visible");
     expect(wakes).toBe(1);
   });
+
+  it("fires when a visible page is restored from browser page cache", () => {
+    setVisibility("visible");
+    let wakes = 0;
+    const stop = onPageVisible(() => { wakes += 1; });
+    window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true }));
+    expect(wakes).toBe(1);
+    stop();
+    window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true }));
+    expect(wakes).toBe(1);
+  });
 });

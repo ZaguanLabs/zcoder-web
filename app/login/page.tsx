@@ -8,6 +8,7 @@ const loginErrors: Record<string, string> = {
   config: "Login is not configured on this server.",
   request: "The login request was invalid.",
   credentials: "Username or password is incorrect.",
+  expired: "Your session expired. Sign in again to continue.",
 };
 
 export default async function LoginPage({ searchParams }: { searchParams: Promise<{ error?: string }> }) {

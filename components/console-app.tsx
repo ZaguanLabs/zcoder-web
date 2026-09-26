@@ -149,6 +149,8 @@ const TranscriptMessage = memo(function TranscriptMessage({ event }: { event: Fl
 
 export function ConsoleApp() {
   const router = useRouter();
+  const routerRef = useRef(router);
+  routerRef.current = router;
   const [servers, setServers] = useState<ServerSummary[]>([]);
   const [serverId, setServerId] = useState(() => typeof window === "undefined" ? "" : localStorage.getItem("zcoder-server-id") ?? "");
   const [hello, setHello] = useState<Flat | null>(null);
@@ -174,6 +176,7 @@ export function ConsoleApp() {
   const [hasNewActivity, setHasNewActivity] = useState(false);
   const [compactDrawer, setCompactDrawer] = useState(false);
   const [serverDetailsOpen, setServerDetailsOpen] = useState(false);
+  const [sessionExpired, setSessionExpired] = useState(false);
   const queueClient = useRef<InputQueue | null>(null);
   const submissionLock = useRef(false);
   const approvalLock = useRef<Approval | null>(null);
@@ -188,6 +191,7 @@ export function ConsoleApp() {
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const connectController = useRef<AbortController | null>(null);
   const pollController = useRef<AbortController | null>(null);
+  const authExpired = useRef(false);
   // Set when the event stream gave up, so returning to the app can recover it.
   const streamLost = useRef(false);
   const lastSessionsReadAt = useRef(0);
@@ -205,6 +209,17 @@ export function ConsoleApp() {
   const selectedSession = sessions.find((session) => String(session.id) === sessionId);
   const selectedSessionTitle = selectedSession ? String(selectedSession.title || "Untitled session") : sessionId ? "Current session" : "No session";
 
+  const expireSession = useCallback(() => {
+    if (authExpired.current) return;
+    authExpired.current = true;
+    connectController.current?.abort();
+    pollController.current?.abort();
+    preparingController.current?.abort();
+    setSessionExpired(true);
+    routerRef.current.replace("/login?error=expired");
+    routerRef.current.refresh();
+  }, []);
+
   const rpc = useCallback(async (id: string, body: Record<string, unknown>, signal?: AbortSignal) => {
     const response = await fetch(`/api/servers/${encodeURIComponent(id)}/rpc`, {
       method: "POST",
@@ -212,8 +227,8 @@ export function ConsoleApp() {
       body: JSON.stringify(body),
       signal,
     });
-    return readRpcJson(response);
-  }, []);
+    return readRpcJson(response, expireSession);
+  }, [expireSession]);
 
   const refreshSessions = useCallback(async (id: string, signal?: AbortSignal) => {
     const list = await rpc(id, { action: "sessions.list" }, signal) as Flat[];
@@ -475,7 +490,7 @@ export function ConsoleApp() {
   useEffect(() => {
     let cancelled = false;
     fetch("/api/servers", { cache: "no-store" })
-      .then((response) => readRpcJson<ServerSummary[]>(response))
+      .then((response) => readRpcJson<ServerSummary[]>(response, expireSession))
       .then((list: ServerSummary[]) => {
         if (cancelled) return;
         setServers(list);
@@ -490,7 +505,7 @@ export function ConsoleApp() {
         }
       })
       .catch((cause) => {
-        if (!cancelled) {
+        if (!cancelled && !authExpired.current) {
           setError(cause instanceof Error ? cause.message : "Could not load servers");
           setConnecting(false);
         }
@@ -501,7 +516,7 @@ export function ConsoleApp() {
       pollController.current?.abort();
       preparingController.current?.abort();
     };
-  }, [connect]);
+  }, [connect, expireSession]);
 
   useEffect(() => {
     const mobile = window.matchMedia("(max-width: 860px)");
@@ -812,6 +827,10 @@ export function ConsoleApp() {
       event.preventDefault();
       event.currentTarget.form?.requestSubmit();
     }
+  }
+
+  if (sessionExpired) {
+    return <main className="loading-state session-expired" role="status"><span /><p>Session expired · returning to sign in</p></main>;
   }
 
   return (

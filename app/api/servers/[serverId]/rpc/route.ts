@@ -6,7 +6,9 @@ import { findServer, ZcoderError } from "@/lib/zcoder";
 import { BodyError, readBoundedJson } from "@/lib/request";
 
 export async function POST(request: NextRequest, context: { params: Promise<{ serverId: string }> }) {
-  if (!await verifySession(request.cookies.get(SESSION_COOKIE)?.value)) return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+  if (!await verifySession(request.cookies.get(SESSION_COOKIE)?.value)) {
+    return NextResponse.json({ error: "Authentication required" }, { status: 401, headers: { "X-Zweb-Auth": "required" } });
+  }
   if (!hasSameOrigin(request)) return NextResponse.json({ error: "Invalid request origin" }, { status: 403 });
   try {
     const input = await readBoundedJson(request, 1_000_000);

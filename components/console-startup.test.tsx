@@ -5,7 +5,8 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConsoleApp } from "@/components/console-app";
 
-vi.mock("next/navigation", () => ({ useRouter: () => ({ replace: vi.fn(), refresh: vi.fn() }) }));
+const navigation = vi.hoisted(() => ({ replace: vi.fn(), refresh: vi.fn() }));
+vi.mock("next/navigation", () => ({ useRouter: () => navigation }));
 vi.mock("next/dynamic", () => ({ default: () => () => null }));
 
 describe("console startup", () => {
@@ -21,11 +22,14 @@ describe("console startup", () => {
 
   beforeEach(() => {
     requests = [];
+    navigation.replace.mockReset();
+    navigation.refresh.mockReset();
     turnId = "";
     metadata = { protocol: 1, sessions: true, model: "Test", profile: "coding" };
     create = () => Response.json({ id: "100_201" });
     list = () => Response.json(history);
     transcript = [{ event: "message", seq: 1, role: "user", content: "Existing message", thinking: "" }];
+    Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
     sessionStorage.clear();
     localStorage.clear();
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -184,5 +188,26 @@ describe("console startup", () => {
     await act(async () => root.render(<StrictMode><ConsoleApp /></StrictMode>));
     expect(requests.filter((request) => request.action === "session.new")).toHaveLength(1);
     expect(sendButton().disabled).toBe(false);
+  });
+
+  it("hides the console and returns to login when a foreground request finds an expired session", async () => {
+    await mount();
+    expect(container.textContent).toContain("Agent transcript");
+
+    list = () => Response.json({ error: "Authentication required" }, {
+      status: 401,
+      headers: { "X-Zweb-Auth": "required" },
+    });
+    Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true });
+    document.dispatchEvent(new Event("visibilitychange"));
+    await act(async () => {
+      Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+
+    expect(container.textContent).toBe("Session expired · returning to sign in");
+    expect(container.textContent).not.toContain("Agent transcript");
+    expect(navigation.replace).toHaveBeenCalledExactlyOnceWith("/login?error=expired");
+    expect(navigation.refresh).toHaveBeenCalledOnce();
   });
 });

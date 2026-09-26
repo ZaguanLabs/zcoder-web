@@ -45,10 +45,14 @@ export function waitForPageVisible(signal?: AbortSignal): Promise<void> {
   });
 }
 
-/** Calls `onVisible` each time the page returns to the foreground. Returns the unsubscribe. */
+/** Calls `onVisible` each time the page returns to the foreground or is restored from page cache. */
 export function onPageVisible(onVisible: () => void): () => void {
   if (typeof document === "undefined") return () => {};
   const listener = () => { if (isPageVisible()) onVisible(); };
   document.addEventListener("visibilitychange", listener);
-  return () => document.removeEventListener("visibilitychange", listener);
+  window.addEventListener("pageshow", listener);
+  return () => {
+    document.removeEventListener("visibilitychange", listener);
+    window.removeEventListener("pageshow", listener);
+  };
 }
