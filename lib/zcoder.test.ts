@@ -23,6 +23,7 @@ beforeAll(async () => {
       let payload: object;
       let status = 200;
       if (url.pathname === "/v1/hello") payload = { protocol: 1, server_name: "Test bench" };
+      else if (url.pathname === "/v1/document") payload = { path: "docs/Design notes.md", text: "\u0001".repeat(262_144) };
       else if (url.pathname === "/v1/sessions" || url.pathname === "/v1/session") {
         // Protocol 1 parses the raw target: after must be the final parameter.
         // URLSearchParams alone would hide incompatible suffixes such as &limit=100.
@@ -71,6 +72,14 @@ describe("zcoder protocol gateway", () => {
     const sessions = await listSessions(remote());
     expect(sessions.map((session) => session.id)).toEqual(["100_200", "100_201"]);
     expect(paths).toEqual(["/v1/sessions?after=0", "/v1/sessions?after=1", "/v1/sessions?after=2"]);
+  });
+
+  it("reads authenticated documents even when JSON escaping exceeds the source-file limit", async () => {
+    const path = "docs/Design notes.md";
+    const document = await zcoderRequest(remote(), "POST", "/v1/document", { path });
+    expect(document).toEqual({ path, text: "\u0001".repeat(262_144) });
+    expect(seen.authorization).toBe(`Bearer ${token}`);
+    expect(seen.body).toBe(JSON.stringify({ path }));
   });
 
   it("loads the transcript with id first and the cursor last until none", async () => {

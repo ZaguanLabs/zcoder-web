@@ -109,6 +109,27 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .server-facts dd select:focus { outline: 1px solid var(--blue); border-color: var(--blue); }
 
 .transcript-pane { position: relative; display: flex; flex-direction: column; }
+.document-reader, .coding-view { display: flex; flex: 1; flex-direction: column; min-height: 0; min-width: 0; }
+.coding-view[hidden], .document-view[hidden] { display: none; }
+.document-toolbar { display: flex; flex: none; align-items: center; flex-wrap: wrap; gap: 6px; padding: 6px 8px; border-bottom: 1px solid var(--line-soft); }
+.document-toolbar button, .document-open button, .document-error button { min-height: 32px; border: 1px solid var(--line); background: var(--panel); color: var(--text); padding: 5px 8px; font-size: 12px; }
+.document-tabs { display: flex; flex: 1; gap: 6px; min-width: 0; overflow-x: auto; }
+.document-tab { display: flex; flex: none; min-width: 0; }
+.document-tab > button:first-child { max-width: 240px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.document-tabs button[aria-current] { color: var(--blue); border-color: var(--blue); background: var(--raised); }
+.document-hint { color: var(--muted); font-size: 12px; flex: 1; }
+.document-open { display: flex; flex: none; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px; font-size: 12px; border-bottom: 1px solid var(--line-soft); }
+.document-open input { flex: 1; min-width: 120px; border: 1px solid var(--line); background: var(--void); color: var(--text); padding: 8px; }
+.document-open p { margin: 0; color: var(--muted); }
+.document-error { display: flex; flex: none; align-items: center; justify-content: space-between; gap: 8px; padding: 8px; color: var(--red); font-size: 12px; overflow-wrap: anywhere; }
+.document-view { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 16px; scrollbar-color: var(--line) var(--void); }
+.document-view > header { display: flex; flex-wrap: wrap; gap: 8px; justify-content: space-between; margin-bottom: 16px; font-size: 12px; overflow-wrap: anywhere; }
+.document-view > header span { color: var(--muted); }
+@media (max-width: 860px) {
+  .document-toolbar button, .document-open button, .document-error button, .document-open input { min-height: 44px; }
+  .document-tabs { flex-basis: 100%; }
+  .document-view { padding: 12px; }
+}
 .transcript-heading { display: flex; align-items: center; gap: 7px; min-width: 0; max-width: 100%; }
 .transcript-session-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
 .transcript-event-count { flex: none; color: var(--dim); }

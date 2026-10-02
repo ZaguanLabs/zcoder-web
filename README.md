@@ -82,6 +82,14 @@ On reconnect, zweb loads the selected session, reconciles saved message IDs thro
 
 On zcoder.zsh 0.17.2 or later, stopping an operation asks the server to continue any messages queued for that same run. When the server confirms continuation, zweb keeps the existing event stream and cursor open while queued work takes over. Older servers stop normally and preserve unconsumed input. While idle in its original session, use **Resume pending input** to explicitly select that session and start `/queue resume`, or **Discard** a known pending card. Discard races are reconciled by status; they never claim to undo consumed input. Servers without queue support keep active-run input as an unsent draft until a normal turn can start.
 
+## Workspace documents
+
+Use **Open document** to read a `.md` or `.markdown` file from the active server's workspace. Enter a literal filename, including any spaces, without shell quoting. Relative paths resolve on the server; absolute paths must remain inside its workspace. The server must advertise `documents: true`; older servers show an update message.
+
+Up to four read-only document tabs stay in memory alongside **Coding**. Canonical paths identify tabs, so opening a symlink or absolute alias reuses the same document. Tabs keep their scroll positions; **Reload** explicitly reads the latest contents, and failed reads preserve the previous view. Closing a tab or returning to Coding focuses the prompt. Switching servers or reloading the app clears the tabs; document contents are never saved in browser storage.
+
+Reading works during warm-up and active turns without changing the draft, transcript, event cursor, or session. Command approvals take focus and temporarily disable the reader. Files are limited to 256 KiB by the server, which also enforces symlink and workspace boundaries. Markdown uses the existing safe renderer, with remote HTML and images kept inert.
+
 ## Connecting zcoder safely
 
 Protocol 1 sends the zcoder token, prompts, reasoning, commands, and transcripts over plain HTTP. Do not expose port 7337 publicly. A loopback SSH tunnel is the safest simple option:

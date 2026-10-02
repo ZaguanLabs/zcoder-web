@@ -4,6 +4,7 @@ import { FormEvent, KeyboardEvent, memo, useCallback, useEffect, useEffectEvent,
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icons";
+import { DocumentReader } from "@/components/document-reader";
 import { eventRetryDelayMs, isTransientRpcError, readRpcJson, RpcResponseError } from "@/lib/client-rpc";
 import { emptyQueue, InputQueue, type InputMode, type QueueSnapshot } from "@/lib/input-queue";
 import { isPageVisible, onPageVisible, waitForPageVisible } from "@/lib/visibility";
@@ -177,9 +178,11 @@ export function ConsoleApp() {
   const [compactDrawer, setCompactDrawer] = useState(false);
   const [serverDetailsOpen, setServerDetailsOpen] = useState(false);
   const [sessionExpired, setSessionExpired] = useState(false);
+  const [readingDocument, setReadingDocument] = useState(false);
   const queueClient = useRef<InputQueue | null>(null);
   const submissionLock = useRef(false);
   const approvalLock = useRef<Approval | null>(null);
+  const approvalRef = useRef<HTMLElement>(null);
   const sidebarRef = useRef<HTMLElement>(null);
   const sidebarToggleRef = useRef<HTMLButtonElement>(null);
   const mobileSidebarToggleRef = useRef<HTMLButtonElement>(null);
@@ -542,6 +545,10 @@ export function ConsoleApp() {
   useEffect(() => {
     const element = transcriptRef.current;
     if (!element) return;
+    if (readingDocument) {
+      setHasNewActivity(true);
+      return;
+    }
     const shouldFollow = followingTranscript.current;
     requestAnimationFrame(() => {
       if (shouldFollow) {
@@ -551,7 +558,11 @@ export function ConsoleApp() {
         setHasNewActivity(true);
       }
     });
-  }, [messages, approval]);
+  }, [messages, approval, readingDocument]);
+
+  useEffect(() => {
+    if (approval) approvalRef.current?.querySelector<HTMLButtonElement>("button")?.focus({ preventScroll: true });
+  }, [approval]);
 
   useEffect(() => {
     const update = () => setOnline(navigator.onLine);
@@ -593,7 +604,7 @@ export function ConsoleApp() {
   }, [prompt]);
 
   useEffect(() => {
-    if (!canPrompt) return;
+    if (!canPrompt || readingDocument) return;
     function routeTypingToPrompt(event: globalThis.KeyboardEvent) {
       if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey || event.key.length !== 1) return;
       const target = event.target;
@@ -609,7 +620,7 @@ export function ConsoleApp() {
     }
     window.addEventListener("keydown", routeTypingToPrompt);
     return () => window.removeEventListener("keydown", routeTypingToPrompt);
-  }, [canPrompt]);
+  }, [canPrompt, readingDocument]);
 
   async function startTurn(value: string, resume = false) {
     if (!serverId || busy || submissionLock.current) return;
@@ -898,6 +909,7 @@ export function ConsoleApp() {
         </aside>
 
         <section className="transcript-pane" aria-labelledby="transcript-title" inert={mobileSessions ? true : undefined}>
+          <DocumentReader key={serverId} serverId={serverId} supported={hello?.documents === true} available={online && !connecting} approvalPending={Boolean(approval)} rpc={rpc} onReadingChange={setReadingDocument} onCodingFocus={() => promptRef.current?.focus({ preventScroll: true })}>
           <div className="pane-title transcript-title"><span ref={transcriptTitleRef} id="transcript-title" className="transcript-heading" tabIndex={-1} aria-label={`Agent transcript, session ${selectedSessionTitle}, ${messages.length} events`}><span>Agent transcript</span> <span className="transcript-event-count">({messages.length} events)</span><span className="transcript-session-title">/ {selectedSessionTitle}</span></span></div>
           <div className="transcript" ref={transcriptRef} aria-live="polite" onScroll={updateTranscriptFollow}>
             {connecting ? <div className="loading-state"><span /><p>Establishing secure gateway</p></div> : null}
@@ -914,9 +926,10 @@ export function ConsoleApp() {
             {messages.map((message, index) => <TranscriptMessage key={`${String(message.seq ?? "local")}-${index}`} event={message} />)}
           </div>
           {hasNewActivity ? <button type="button" className="transcript-jump" onClick={jumpToLatestActivity}>Jump to latest activity</button> : null}
+          </DocumentReader>
           {error && hello ? <div className="error-strip" role="alert"><strong>!</strong><span>{error} <button type="button" onClick={() => void connect(serverId)}>Reconnect</button></span><button type="button" onClick={() => setError("")} aria-label="Dismiss error">×</button></div> : null}
           {approval ? (
-            <section className="approval-bar" aria-labelledby="approval-title">
+            <section ref={approvalRef} className="approval-bar" aria-labelledby="approval-title">
               <div><p id="approval-title"><span>!</span> Command approval required</p><code>{approval.command}</code></div>
               <div className="approval-actions">
                 <button type="button" className="deny" disabled={approvalSending || !online || connecting} aria-keyshortcuts="Alt+n" title="Deny command (Alt+N)" onClick={() => void answerApproval("n")}>Deny <kbd>Alt+N</kbd></button>

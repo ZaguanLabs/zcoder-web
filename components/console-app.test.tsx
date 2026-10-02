@@ -37,7 +37,8 @@ describe("console keyboard controls", () => {
       const body = JSON.parse(String(options?.body));
       requests.push(body);
       switch (body.action) {
-        case "hello": return Response.json({ protocol: 1, sessions: true, model: "Test", profile: "coding" });
+        case "hello": return Response.json({ protocol: 1, sessions: true, documents: true, model: "Test", profile: "coding" });
+        case "document.read": return Response.json({ path: "docs/Design notes.md", text: "# Design notes\n" });
         case "session.new": return Response.json({ id: "session-2" });
         case "sessions.list": return Response.json([{ id: "session-2", title: "Test session", current: 1 }]);
         case "turn.start": return Response.json({ turn_id: "turn-1" });
@@ -96,6 +97,32 @@ describe("console keyboard controls", () => {
     expect(document.activeElement).toBe(prompt);
     await press("b", { ctrlKey: true, repeat: true }, prompt);
     expect(button("Hide sidebar").getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("keeps documents separate from drafts and brings approvals forward while reading", async () => {
+    await press("d", {}, document.body);
+    const open = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find((item) => item.textContent === "Open document")!;
+    await act(async () => open.click());
+    await act(async () => {
+      const input = container.querySelector<HTMLInputElement>(".document-open input")!;
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "docs/Design notes.md");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => container.querySelector(".document-open")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
+    expect(requests).toContainEqual({ action: "document.read", path: "docs/Design notes.md" });
+    expect(requests.some((request) => request.action === "turn.start")).toBe(false);
+    const view = container.querySelector<HTMLElement>(".document-view")!;
+    view.focus();
+    await press(" ", {}, view);
+    expect(document.activeElement).toBe(view);
+    expect(container.querySelector("textarea")!.value).toBe("d");
+    await requestCommandApproval();
+    expect(container.querySelector(".document-reader")!.hasAttribute("inert")).toBe(true);
+    expect(document.activeElement).toBe(container.querySelector(".approval-actions .deny"));
+    expect(requests.filter((request) => request.action === "events.next")).toEqual([
+      { action: "events.next", after: 0 }, { action: "events.next", after: 1 },
+    ]);
+    expect(requests.filter((request) => request.action === "turn.start")).toEqual([{ action: "turn.start", prompt: "d" }]);
   });
 
   it("moves focus out of the sidebar when hiding it", async () => {

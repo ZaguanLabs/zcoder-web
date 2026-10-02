@@ -24,6 +24,15 @@ export async function runRpc(server: ZcoderServer, input: RpcInput): Promise<Fla
     case "session.load": return loadTranscript(server, text(input, "id", 80));
     case "session.select": return zcoderRequest(server, "POST", "/v1/session/select", { id: text(input, "id", 80) });
     case "session.new": return zcoderRequest(server, "POST", "/v1/session/new", {});
+    case "document.read": {
+      const path = text(input, "path", 900_000);
+      if (path.includes("\0")) throw new ZcoderError("Invalid path", 400);
+      const document = await zcoderRequest(server, "POST", "/v1/document", { path });
+      if (typeof document.path !== "string" || !document.path || typeof document.text !== "string") {
+        throw new ZcoderError("Remote server returned an invalid document");
+      }
+      return document;
+    }
     case "turn.start": return zcoderRequest(server, "POST", "/v1/turn", { prompt: text(input, "prompt", 900_000) });
     case "input.submit": {
       let request;
