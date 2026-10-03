@@ -986,7 +986,7 @@ export function ConsoleApp() {
         </div>
         <div className="prompt-row"><span aria-hidden="true">›</span><textarea ref={promptRef} id="prompt" aria-label="Message" value={prompt} onChange={(event) => setPrompt(event.target.value)} onKeyDown={promptKeyDown} disabled={!canPrompt} rows={1} autoFocus enterKeyHint="send" placeholder={busy ? queueSupported ? "Add steering or a follow-up…" : "Draft your next message…" : modelReady ? "Describe the job" : modelWarming ? "Model is warming up…" : "Model unavailable"} /><button type={busy && !prompt ? "button" : "submit"} disabled={!canSend && !busy} className={busy && !prompt ? "send-button stop-button" : "send-button"} onClick={busy && !prompt ? cancelTurn : undefined}><Icon name={busy && !prompt ? "stop" : "send"} /> {busy && !prompt ? "Stop" : busy ? (inputMode === "steer" ? "Steer" : "Queue") : "Send"}</button></div>
       </form>
-      <footer className="keybar"><span><kbd>Enter</kbd> Send</span><span><kbd>Shift Enter</kbd> Newline</span><span><kbd>Esc</kbd> Stop</span><span><kbd>Ctrl+B</kbd> Sidebar</span><span><kbd>Tab</kbd> Focus</span><span className="keybar-right">zweb · remote zcoder</span></footer>
+      <footer className="keybar"><span><kbd>Enter</kbd> Send</span><span><kbd>Shift Enter</kbd> Newline</span><span><kbd>Esc</kbd> Stop</span><span><kbd>Ctrl+B</kbd> Sidebar</span><span><kbd>Tab</kbd> Focus</span>{busy && queueSupported ? <span>{inputMode === "steer" ? "Joins after the current response and its tools." : "Waits until the current task finishes."}</span> : null}<span className="keybar-right">zweb · remote zcoder</span></footer>
     </main>
   );
 }
