@@ -982,7 +982,7 @@ export function ConsoleApp() {
         ) : null}
         <div className="composer-actions">
           {busy && queueSupported ? <label>Send as <select aria-label="Queued input mode" value={inputMode} onChange={(event) => setInputMode(event.target.value as InputMode)}><option value="steer">Steering</option><option value="follow_up">Follow-up</option></select></label> : null}
-          <small>{busy ? queueSupported ? inputMode === "steer" ? "Joins after the current response and its tools." : "Waits until the current task finishes." : "Draft saved here until this run finishes; this server does not support queued input." : "Enter to send · Shift Enter for a newline"}</small>
+
         </div>
         <div className="prompt-row"><span aria-hidden="true">›</span><textarea ref={promptRef} id="prompt" aria-label="Message" value={prompt} onChange={(event) => setPrompt(event.target.value)} onKeyDown={promptKeyDown} disabled={!canPrompt} rows={1} autoFocus enterKeyHint="send" placeholder={busy ? queueSupported ? "Add steering or a follow-up…" : "Draft your next message…" : modelReady ? "Describe the job" : modelWarming ? "Model is warming up…" : "Model unavailable"} /><button type={busy && !prompt ? "button" : "submit"} disabled={!canSend && !busy} className={busy && !prompt ? "send-button stop-button" : "send-button"} onClick={busy && !prompt ? cancelTurn : undefined}><Icon name={busy && !prompt ? "stop" : "send"} /> {busy && !prompt ? "Stop" : busy ? (inputMode === "steer" ? "Steer" : "Queue") : "Send"}</button></div>
       </form>
