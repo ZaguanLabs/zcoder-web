@@ -4,6 +4,7 @@ import { act, StrictMode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConsoleApp } from "@/components/console-app";
+import { queueStorageKey, type InputRecord } from "@/lib/input-queue";
 
 const navigation = vi.hoisted(() => ({ replace: vi.fn(), refresh: vi.fn() }));
 vi.mock("next/navigation", () => ({ useRouter: () => navigation }));
@@ -18,6 +19,8 @@ describe("console startup", () => {
   let list: () => Response | Promise<Response>;
   let transcript: Record<string, unknown>[];
   let turnId: string;
+  let receipts: Record<string, string>;
+  let pending: string;
   const history = [{ id: "100_200", title: "Previous conversation", current: 1 }];
 
   beforeEach(() => {
@@ -25,6 +28,8 @@ describe("console startup", () => {
     navigation.replace.mockReset();
     navigation.refresh.mockReset();
     turnId = "";
+    receipts = {};
+    pending = "";
     metadata = { protocol: 1, sessions: true, model: "Test", profile: "coding" };
     create = () => Response.json({ id: "100_201" });
     list = () => Response.json(history);
@@ -46,7 +51,10 @@ describe("console startup", () => {
         case "sessions.list": return list();
         case "session.select": return Response.json({ ok: true });
         case "session.load": return Response.json(transcript);
-        case "input.list": return Response.json({ turn_id: turnId, pending: "" });
+        case "input.list": return Response.json({ turn_id: turnId, pending });
+        case "input.status": return receipts[String(body.message_id)]
+          ? Response.json({ message_id: body.message_id, state: receipts[String(body.message_id)] })
+          : Response.json({ error: "Could not confirm delivery" }, { status: 503 });
         case "cancel": return Response.json({ ok: true, continued: true });
         case "events.next": return new Promise<Response>((_, reject) => {
           options?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
@@ -72,6 +80,67 @@ describe("console startup", () => {
   function sendButton() {
     return container.querySelector<HTMLButtonElement>(".send-button")!;
   }
+
+  function saveQueue(states: InputRecord["state"][]) {
+    metadata.input_queue = true;
+    const records = states.map((state, index) => ({
+      request: { session_id: "100_201", turn_id: "turn-1", message_id: `message-${index}`, mode: "steer", text: `Queued message ${index}` },
+      state,
+    }));
+    localStorage.setItem(queueStorageKey("test", "100_201"), JSON.stringify(records));
+    return records;
+  }
+
+  it("keeps the pending queue collapsed and removes completed messages from the composer", async () => {
+    turnId = "turn-1";
+    saveQueue(["consumed", "discarded", "accepted"]);
+    receipts["message-2"] = "accepted";
+    await mount();
+
+    const panel = container.querySelector<HTMLDetailsElement>(".queue-panel")!;
+    expect(panel.open).toBe(false);
+    expect(panel.querySelector("summary")?.textContent).toContain("Queue · 1");
+    expect(panel.querySelector("summary")?.textContent).toContain("Queued message 2");
+    expect(panel.textContent).not.toContain("Queued message 0");
+    expect(panel.textContent).not.toContain("Queued message 1");
+    expect(container.querySelector(".transcript")?.textContent).not.toContain("Queued message 2");
+
+    await act(async () => panel.querySelector("summary")!.click());
+    expect(panel.open).toBe(true);
+    const refresh = Array.from(panel.querySelectorAll("button")).find((button) => button.textContent === "Refresh queue")!;
+    await act(async () => refresh.click());
+    expect(panel.open).toBe(true);
+
+    receipts["message-2"] = "consumed";
+    await act(async () => refresh.click());
+    expect(container.querySelector(".queue-panel")).toBeNull();
+  });
+
+  it("opens delivery problems for recovery while keeping completed history hidden", async () => {
+    saveQueue(["consumed", "uncertain", "rejected"]);
+    await mount();
+
+    const panel = container.querySelector<HTMLDetailsElement>(".queue-panel")!;
+    expect(panel.open).toBe(true);
+    expect(panel.querySelector("summary")?.textContent).toContain("Queue needs attention");
+    expect(panel.textContent).not.toContain("Queued message 0");
+    expect(panel.textContent).toContain("Could not confirm delivery");
+    expect(panel.textContent).toContain("Retry exact submission");
+    expect(panel.textContent).toContain("Discard");
+    expect(panel.textContent).toContain("Dismiss");
+  });
+
+  it("keeps server-only pending input reachable without counting it as local messages", async () => {
+    metadata.input_queue = true;
+    pending = "A message queued from another client";
+    await mount();
+
+    const panel = container.querySelector<HTMLDetailsElement>(".queue-panel")!;
+    expect(panel.open).toBe(false);
+    expect(panel.querySelector("summary")?.textContent).toBe("QueuePaused");
+    expect(panel.textContent).toContain(pending);
+    expect(panel.textContent).toContain("Resume pending input");
+  });
 
   it("keeps sending disabled until creation is acknowledged", async () => {
     let resolveCreate!: (response: Response) => void;

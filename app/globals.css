@@ -372,14 +372,6 @@ button:disabled { cursor: not-allowed; opacity: .45; }
   .prompt-row textarea { min-height: 34px; padding: 6px 4px; font-size: 15px; }
   .prompt-row button { min-width: 52px; min-height: 34px; font-size: 11px; gap: 4px; }
   .prompt-row button svg { width: 14px; height: 14px; }
-  .queue-panel { margin-bottom: 4px; }
-  .queue-panel summary { padding: 3px 0; }
-  .queue-records { max-height: 15dvh; }
-  .queue-card { padding: 5px; margin: 2px 0; }
-  .queue-card header { gap: 4px; }
-  .queue-card pre, .queue-listing { max-height: 80px; }
-  .queue-actions { gap: 4px; flex-wrap: wrap; }
-  .queue-actions button { padding: 3px 5px; font-size: 10px; min-height: 28px; }
   .composer-actions { padding-bottom: 4px; }
   .composer-actions button, .composer-actions select { padding: 4px 6px; font-size: 11px; min-height: 28px; }
   .composer-actions small { font-size: 10px; }
@@ -396,14 +388,6 @@ button:disabled { cursor: not-allowed; opacity: .45; }
   .prompt-row button svg { width: 16px; height: 16px; }
   .approval-actions { display: grid; grid-template-columns: 1fr 1fr; }
   .approval-actions .allow { grid-column: 1 / -1; }
-  .queue-panel { padding: 2px 0 4px; margin-bottom: 4px; font-size: 11px; }
-  .queue-panel summary { padding: 3px 0; }
-  .queue-records { max-height: 15dvh; }
-  .queue-card { padding: 5px; margin: 3px 0; }
-  .queue-card header { gap: 4px; }
-  .queue-card pre, .queue-listing { max-height: 80px; }
-  .queue-actions { gap: 4px; flex-wrap: wrap; }
-  .queue-actions button { padding: 4px 6px; font-size: 11px; min-height: 32px; }
 }
 
 @media (max-width: 860px) and (max-height: 620px) {
@@ -420,32 +404,38 @@ button:disabled { cursor: not-allowed; opacity: .45; }
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; transition-duration: .01ms !important; }
 }
 
-.queue-panel { min-height: 32px; overflow-y: auto; border-bottom: 1px solid var(--line); padding: 4px 0 9px; margin-bottom: 8px; font-size: 12px; }
-.queue-panel summary { cursor: pointer; color: var(--blue); padding: 5px 0; }
-.queue-records { max-height: 25dvh; overflow-y: auto; }
-.queue-card { border: 1px solid var(--line-soft); background: var(--panel); padding: 8px; margin: 5px 0; }
-.queue-card header { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; }
-.queue-card header span { color: var(--yellow); }
-.queue-card pre, .queue-listing { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; max-height: 140px; overflow-y: auto; }
+/* The queue is a quiet disclosure in the composer, not transcript activity. */
+.queue-panel { flex: none; min-width: 0; margin-bottom: 4px; font-size: 12px; color: var(--muted); }
+.queue-panel > summary { display: flex; align-items: center; gap: 8px; min-height: 28px; padding: 3px 0; cursor: pointer; list-style: none; }
+.queue-panel > summary::-webkit-details-marker { display: none; }
+.queue-panel > summary::before { content: "›"; flex: none; }
+.queue-panel[open] > summary::before { transform: rotate(90deg); }
+.queue-panel > summary:hover { color: var(--text); }
+.queue-label, .queue-status { flex: none; }
+.queue-preview { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.queue-panel[open] > summary .queue-preview { visibility: hidden; }
+.queue-records { max-height: 20dvh; overflow-y: auto; }
+.queue-item { padding: 6px 0; border-top: 1px solid var(--line-soft); }
+.queue-item-label { display: flex; align-items: center; gap: 8px; }
+.queue-item-label span { color: var(--yellow); }
+.queue-item pre, .queue-listing { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; margin: 4px 0 6px; color: var(--text); max-height: 140px; overflow-y: auto; }
 .queue-panel p { color: var(--red); overflow-wrap: anywhere; }
+.queue-panel > details { margin: 6px 0; }
+.queue-panel > details > summary { cursor: pointer; padding: 4px 0; }
 .queue-actions, .composer-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
-.queue-actions button, .composer-actions button, .composer-actions select { border: 1px solid var(--line); background: var(--raised); color: var(--text); padding: 7px 9px; font-size: 12px; }
+.queue-actions button { min-height: 28px; padding: 4px 6px; border: 1px solid var(--line-soft); background: transparent; color: var(--muted); font-size: 12px; }
+.queue-actions button:hover { color: var(--text); border-color: var(--muted); }
+.queue-panel > .queue-actions { padding: 6px 0; }
+.composer-actions button, .composer-actions select { border: 1px solid var(--line); background: var(--raised); color: var(--text); padding: 7px 9px; font-size: 12px; }
 .composer-actions { flex: none; padding-bottom: 6px; }
-.composer-actions:has(> small:only-child) { position: absolute; top: 6px; right: 10px; padding: 0; }
+.prompt-box:not(:has(.queue-panel)) .composer-actions:has(> small:only-child) { position: absolute; top: 6px; right: 10px; padding: 0; }
 .composer-actions label { color: var(--blue); font-size: 12px; }
 .composer-actions small { font-size: 11px; flex: 1; color: var(--muted); min-width: 120px; }
 @media (max-width: 760px) {
-  .composer-actions:has(> small:only-child) { position: static; }
+  .prompt-box:not(:has(.queue-panel)) .composer-actions:has(> small:only-child) { position: static; }
   .composer-actions > small:only-child { display: none; }
   .composer-actions:has(> small:only-child) { padding: 0; }
-  .queue-panel { padding: 3px 0 6px; margin-bottom: 6px; font-size: 11px; }
-  .queue-panel summary { padding: 4px 0; }
-  .queue-records { max-height: 18dvh; }
-  .queue-card { padding: 6px; margin: 4px 0; }
-  .queue-card header { gap: 6px; }
-  .queue-card pre, .queue-listing { max-height: 100px; }
-  .queue-actions { gap: 5px; }
-  .queue-actions button { padding: 5px 7px; font-size: 11px; }
-  .queue-actions button, .composer-actions button, .composer-actions select { min-height: 44px; }
-  .queue-records { max-height: 20dvh; }
+  .queue-panel > summary { min-height: 32px; }
+  .queue-actions button { min-height: 32px; }
+  .composer-actions button, .composer-actions select { min-height: 44px; }
 }

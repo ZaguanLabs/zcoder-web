@@ -205,6 +205,8 @@ export function ConsoleApp() {
   const canPrompt = Boolean(hello) && !connecting;
   const canQueue = busy && queueSupported && Boolean(runId) && queue.turnId === runId && !queue.loading && !queue.error;
   const hasUncertainInput = queue.records.some((record) => record.state === "uncertain");
+  const queuedInputs = queue.records.filter((record) => record.state !== "consumed" && record.state !== "discarded");
+  const queueNeedsAttention = Boolean(queue.error) || queuedInputs.some((record) => record.state === "rejected" || Boolean(record.error));
   const canSend = online && !connecting && !sessionsLoading && !inputSending && !hasUncertainInput &&
     (hello?.sessions !== true || Boolean(sessionId)) &&
     (busy ? canQueue : modelReady && !approval && (!queueSupported || Boolean(sessionId) && !queue.loading && !queue.error));
@@ -941,14 +943,18 @@ export function ConsoleApp() {
         </section>
       </div>
       <form className="prompt-box" onSubmit={submitPrompt} inert={mobileSessions ? true : undefined}>
-        {queueSupported && sessionId ? (
-          <details className="queue-panel" open={queue.records.some((record) => ["uncertain", "accepted"].includes(record.state)) || Boolean(queue.pending) || Boolean(queue.error)}>
-            <summary>Queued input · {queue.records.filter((record) => record.state === "accepted").length} pending from this browser</summary>
+        {queueSupported && sessionId && (queuedInputs.length > 0 || queue.pending || queue.error) ? (
+          <details key={`${serverId}:${sessionId}`} className="queue-panel" open={queueNeedsAttention ? true : undefined}>
+            <summary>
+              <span className="queue-label">{queueNeedsAttention ? "Queue needs attention" : "Queue"}{queuedInputs.length > 0 ? ` · ${queuedInputs.length}` : ""}</span>
+              {queuedInputs[0] ? <span className="queue-preview">{queuedInputs[0].request.mode === "steer" ? "Steering" : "Follow-up"} · {queuedInputs[0].request.text}</span> : null}
+              {!queue.turnId && (queue.pending || queuedInputs.some((record) => record.state === "accepted")) ? <span className="queue-status">Paused</span> : null}
+            </summary>
             {queue.error ? <p role="alert">{queue.error}</p> : null}
             <div className="queue-records">
-              {queue.records.map((record) => (
-                <article className="queue-card" key={record.request.message_id}>
-                  <header><strong>{record.request.mode === "steer" ? "Steering" : "Follow-up"}</strong><span>{record.state === "uncertain" ? "Unconfirmed" : record.state === "accepted" ? (queue.turnId ? "Pending" : "Paused") : record.state === "consumed" ? "Added to history" : record.state === "discarded" ? "Discarded" : "Rejected"}</span></header>
+              {queuedInputs.map((record) => (
+                <div className="queue-item" key={record.request.message_id}>
+                  <div className="queue-item-label">{record.request.mode === "steer" ? "Steering" : "Follow-up"}{record.state !== "accepted" ? <span>{record.state === "uncertain" ? "Unconfirmed" : "Rejected"}</span> : null}</div>
                   <pre>{record.request.text}</pre>
                   {record.error ? <p role="alert">{record.error}</p> : null}
                   <div className="queue-actions">
@@ -964,7 +970,7 @@ export function ConsoleApp() {
                       <button type="button" disabled={!online || inputSending} onClick={() => void queueClient.current?.drop(record.request.message_id)}>Discard</button>
                     </> : <button type="button" onClick={() => { try { queueClient.current?.dismiss(record.request.message_id); } catch { setError("Could not update saved input"); } }}>Dismiss</button>}
                   </div>
-                </article>
+                </div>
               ))}
             </div>
             {queue.pending ? <details><summary>Server pending listing</summary><pre className="queue-listing">{queue.pending}</pre></details> : null}
