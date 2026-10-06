@@ -143,7 +143,14 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .message-assistant { border-left-color: var(--blue); }
 .message-user { border-left-color: var(--green); background: #242a23; }
 .message-user .message-glyph { color: var(--green); }
-.message-tool { border-left-color: var(--yellow); }
+.message-tool { border-left-color: var(--yellow); contain-intrinsic-size: auto 40px; }
+.message-tool > header:has(.tool-disclosure) { padding: 0; }
+.tool-disclosure { width: 100%; min-width: 0; min-height: 36px; display: flex; align-items: center; gap: 9px; padding: 6px 14px; border: 0; background: transparent; color: var(--muted); text-align: left; font: inherit; }
+.tool-disclosure:hover { background: var(--raised); }
+.tool-disclosure .tool-name { color: var(--yellow); font-size: 12px; font-weight: 600; }
+.tool-disclosure time { font-size: 11px; }
+.tool-output-label { margin-left: auto; font-size: 11px; }
+@media (max-width: 760px) { .tool-disclosure { min-height: 44px; } }
 .message-tool .message-glyph { color: var(--yellow); }
 .message-error { border-left-color: var(--red); }
 .message-error .message-glyph { color: var(--red); }
@@ -404,38 +411,27 @@ button:disabled { cursor: not-allowed; opacity: .45; }
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; transition-duration: .01ms !important; }
 }
 
-/* The queue is a quiet disclosure in the composer, not transcript activity. */
-.queue-panel { flex: none; min-width: 0; margin-bottom: 4px; font-size: 12px; color: var(--muted); }
-.queue-panel > summary { display: flex; align-items: center; gap: 8px; min-height: 28px; padding: 3px 0; cursor: pointer; list-style: none; }
-.queue-panel > summary::-webkit-details-marker { display: none; }
-.queue-panel > summary::before { content: "›"; flex: none; }
-.queue-panel[open] > summary::before { transform: rotate(90deg); }
-.queue-panel > summary:hover { color: var(--text); }
-.queue-label, .queue-status { flex: none; }
-.queue-preview { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.queue-panel[open] > summary .queue-preview { visibility: hidden; }
-.queue-records { max-height: 20dvh; overflow-y: auto; }
-.queue-item { padding: 6px 0; border-top: 1px solid var(--line-soft); }
-.queue-item-label { display: flex; align-items: center; gap: 8px; }
-.queue-item-label span { color: var(--yellow); }
-.queue-item pre, .queue-listing { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; margin: 4px 0 6px; color: var(--text); max-height: 140px; overflow-y: auto; }
-.queue-panel p { color: var(--red); overflow-wrap: anywhere; }
-.queue-panel > details { margin: 6px 0; }
-.queue-panel > details > summary { cursor: pointer; padding: 4px 0; }
+/* Pending input shares the transcript's user-message layout. */
+.queued-messages { min-width: 0; }
+.message-queued { border: 1px dashed var(--line); border-radius: 12px; background: transparent; margin: 10px 0 10px auto; max-width: min(100%, 78ch); contain-intrinsic-size: auto 90px; }
+.queued-content { white-space: pre-wrap; padding-bottom: 8px; }
+.message-queued > p, .queued-messages > p { padding: 0 14px; color: var(--red); overflow-wrap: anywhere; font-size: 12px; }
 .queue-actions, .composer-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
-.queue-actions button { min-height: 28px; padding: 4px 6px; border: 1px solid var(--line-soft); background: transparent; color: var(--muted); font-size: 12px; }
-.queue-actions button:hover { color: var(--text); border-color: var(--muted); }
-.queue-panel > .queue-actions { padding: 6px 0; }
+.message-queued .queue-actions { padding: 0 12px 8px; }
+.queued-status { display: inline-flex; align-items: center; gap: 5px; margin-right: auto; color: var(--muted); font-size: 12px; }
+.message-queued[data-input-state="uncertain"] .queued-status, .message-queued[data-input-state="rejected"] .queued-status { color: var(--yellow); }
+.queue-actions button { min-height: 28px; padding: 4px 6px; border: 0; background: transparent; color: var(--muted); font-size: 12px; }
+.queue-actions button:hover { color: var(--text); background: var(--raised); }
+.queue-actions button[aria-label="Remove queued message"] { font-size: 18px; min-width: 28px; }
+.queue-recovery { padding: 0 8px 8px; }
+.queued-messages > details { margin: 8px; color: var(--muted); font-size: 12px; }
+.queued-messages > details > summary { cursor: pointer; padding: 4px 0; }
+.queue-listing { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; color: var(--text); }
 .composer-actions button, .composer-actions select { border: 1px solid var(--line); background: var(--raised); color: var(--text); padding: 7px 9px; font-size: 12px; }
 .composer-actions { flex: none; padding-bottom: 6px; }
-.prompt-box:not(:has(.queue-panel)) .composer-actions:has(> small:only-child) { position: absolute; top: 6px; right: 10px; padding: 0; }
+.composer-actions:empty { display: none; }
 .composer-actions label { color: var(--blue); font-size: 12px; }
-.composer-actions small { font-size: 11px; flex: 1; color: var(--muted); min-width: 120px; }
 @media (max-width: 760px) {
-  .prompt-box:not(:has(.queue-panel)) .composer-actions:has(> small:only-child) { position: static; }
-  .composer-actions > small:only-child { display: none; }
-  .composer-actions:has(> small:only-child) { padding: 0; }
-  .queue-panel > summary { min-height: 32px; }
-  .queue-actions button { min-height: 32px; }
+  .queue-actions button { min-height: 44px; min-width: 44px; }
   .composer-actions button, .composer-actions select { min-height: 44px; }
 }

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, StrictMode } from "react";
+import { act, StrictMode, type ComponentProps } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConsoleApp } from "@/components/console-app";
@@ -9,6 +9,17 @@ import { queueStorageKey, type InputRecord } from "@/lib/input-queue";
 const navigation = vi.hoisted(() => ({ replace: vi.fn(), refresh: vi.fn() }));
 vi.mock("next/navigation", () => ({ useRouter: () => navigation }));
 vi.mock("next/dynamic", () => ({ default: () => () => null }));
+const renderCounts = vi.hoisted(() => ({ documentReader: 0 }));
+vi.mock("@/components/document-reader", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/components/document-reader")>();
+  return {
+    ...actual,
+    DocumentReader: (props: ComponentProps<typeof actual.DocumentReader>) => {
+      renderCounts.documentReader += 1;
+      return <actual.DocumentReader {...props} />;
+    },
+  };
+});
 
 describe("console startup", () => {
   let container: HTMLDivElement;
@@ -21,6 +32,7 @@ describe("console startup", () => {
   let turnId: string;
   let receipts: Record<string, string>;
   let pending: string;
+  let submitInput: (body: Record<string, unknown>) => Response | Promise<Response>;
   const history = [{ id: "100_200", title: "Previous conversation", current: 1 }];
 
   beforeEach(() => {
@@ -30,6 +42,7 @@ describe("console startup", () => {
     turnId = "";
     receipts = {};
     pending = "";
+    submitInput = (body) => Response.json({ message_id: body.message_id, state: "accepted" });
     metadata = { protocol: 1, sessions: true, model: "Test", profile: "coding" };
     create = () => Response.json({ id: "100_201" });
     list = () => Response.json(history);
@@ -55,6 +68,12 @@ describe("console startup", () => {
         case "input.status": return receipts[String(body.message_id)]
           ? Response.json({ message_id: body.message_id, state: receipts[String(body.message_id)] })
           : Response.json({ error: "Could not confirm delivery" }, { status: 503 });
+        case "input.submit":
+          receipts[String(body.message_id)] = "accepted";
+          return submitInput(body);
+        case "input.drop":
+          receipts[String(body.message_id)] = "discarded";
+          return Response.json({ message_id: body.message_id, state: "discarded" });
         case "cancel": return Response.json({ ok: true, continued: true });
         case "events.next": return new Promise<Response>((_, reject) => {
           options?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
@@ -91,55 +110,135 @@ describe("console startup", () => {
     return records;
   }
 
-  it("keeps the pending queue collapsed and removes completed messages from the composer", async () => {
+  it("shows pending messages inline and removes them once consumed", async () => {
     turnId = "turn-1";
     saveQueue(["consumed", "discarded", "accepted"]);
     receipts["message-2"] = "accepted";
     await mount();
 
-    const panel = container.querySelector<HTMLDetailsElement>(".queue-panel")!;
-    expect(panel.open).toBe(false);
-    expect(panel.querySelector("summary")?.textContent).toContain("Queue · 1");
-    expect(panel.querySelector("summary")?.textContent).toContain("Queued message 2");
-    expect(panel.textContent).not.toContain("Queued message 0");
-    expect(panel.textContent).not.toContain("Queued message 1");
-    expect(container.querySelector(".transcript")?.textContent).not.toContain("Queued message 2");
-
-    await act(async () => panel.querySelector("summary")!.click());
-    expect(panel.open).toBe(true);
-    const refresh = Array.from(panel.querySelectorAll("button")).find((button) => button.textContent === "Refresh queue")!;
-    await act(async () => refresh.click());
-    expect(panel.open).toBe(true);
+    const queue = container.querySelector(".transcript .queued-messages")!;
+    expect(container.querySelector(".prompt-box .queued-messages")).toBeNull();
+    expect(container.querySelector(".queue-panel")).toBeNull();
+    expect(queue.querySelectorAll(".message-queued")).toHaveLength(1);
+    expect(queue.textContent).toContain("Queued message 2");
+    expect(queue.querySelector(".queued-status")?.textContent).toContain("Queued");
+    expect(queue.textContent).not.toContain("Queued message 0");
+    expect(queue.textContent).not.toContain("Queued message 1");
 
     receipts["message-2"] = "consumed";
+    const refresh = Array.from(queue.querySelectorAll("button")).find((button) => button.textContent === "Refresh queue")!;
     await act(async () => refresh.click());
-    expect(container.querySelector(".queue-panel")).toBeNull();
+    expect(container.querySelector(".message-queued")).toBeNull();
   });
 
-  it("opens delivery problems for recovery while keeping completed history hidden", async () => {
+  it("shows delivery problems beside their message with recovery controls", async () => {
+    turnId = "turn-1";
     saveQueue(["consumed", "uncertain", "rejected"]);
     await mount();
+    const prompt = container.querySelector<HTMLTextAreaElement>("#prompt")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(prompt, "Another message");
+      prompt.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(sendButton().disabled).toBe(true);
 
-    const panel = container.querySelector<HTMLDetailsElement>(".queue-panel")!;
-    expect(panel.open).toBe(true);
-    expect(panel.querySelector("summary")?.textContent).toContain("Queue needs attention");
-    expect(panel.textContent).not.toContain("Queued message 0");
-    expect(panel.textContent).toContain("Could not confirm delivery");
-    expect(panel.textContent).toContain("Retry exact submission");
-    expect(panel.textContent).toContain("Discard");
-    expect(panel.textContent).toContain("Dismiss");
+    const queue = container.querySelector(".transcript .queued-messages")!;
+    expect(queue.textContent).not.toContain("Queued message 0");
+    expect(queue.textContent).toContain("Unconfirmed");
+    expect(queue.textContent).toContain("Rejected");
+    expect(queue.textContent).toContain("Could not confirm delivery");
+    expect(queue.textContent).toContain("Retry exact submission");
+    expect(queue.querySelector('[aria-label="Remove queued message"]')).not.toBeNull();
+    expect(queue.textContent).toContain("Dismiss");
   });
 
-  it("keeps server-only pending input reachable without counting it as local messages", async () => {
+  it("keeps server-only pending input reachable without inventing local messages", async () => {
     metadata.input_queue = true;
     pending = "A message queued from another client";
     await mount();
 
-    const panel = container.querySelector<HTMLDetailsElement>(".queue-panel")!;
-    expect(panel.open).toBe(false);
-    expect(panel.querySelector("summary")?.textContent).toBe("QueuePaused");
-    expect(panel.textContent).toContain(pending);
-    expect(panel.textContent).toContain("Resume pending input");
+    const queue = container.querySelector(".transcript .queued-messages")!;
+    expect(queue.querySelectorAll(".message-queued")).toHaveLength(0);
+    expect(queue.textContent).toContain(pending);
+    expect(queue.textContent).toContain("Resume pending input");
+  });
+
+  it("queues a follow-up on the active run and removes it by its receipt ID", async () => {
+    metadata.input_queue = true;
+    turnId = "running-turn";
+    create = () => Response.json({ error: "active run" }, { status: 409 });
+    await mount();
+    const prompt = container.querySelector<HTMLTextAreaElement>("#prompt")!;
+    const mode = container.querySelector<HTMLSelectElement>('[aria-label="Queued input mode"]')!;
+    await act(async () => {
+      mode.value = "follow_up";
+      mode.dispatchEvent(new Event("change", { bubbles: true }));
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(prompt, "Do this next\nwith exact text");
+      prompt.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => container.querySelector("form.prompt-box")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
+    const submitted = requests.find((request) => request.action === "input.submit")!;
+    expect(submitted).toMatchObject({ session_id: "100_200", turn_id: "running-turn", mode: "follow_up", text: "Do this next\nwith exact text" });
+    expect(prompt.value).toBe("");
+    const queued = container.querySelector(".transcript .message-queued")!;
+    expect(queued.querySelector(".queued-status")?.textContent).toBe("Queued");
+    await act(async () => queued.querySelector<HTMLButtonElement>('[aria-label="Remove queued message"]')!.click());
+    expect(requests).toContainEqual({ action: "input.drop", session_id: "100_200", message_id: submitted.message_id });
+    expect(container.querySelector(".message-queued")).toBeNull();
+  });
+
+  it("keeps draft edits out of the transcript's render path", async () => {
+    await mount();
+    const initialRenders = renderCounts.documentReader;
+    const prompt = container.querySelector<HTMLTextAreaElement>("#prompt")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(prompt, "A draft");
+      prompt.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(prompt.value).toBe("A draft");
+    expect(renderCounts.documentReader).toBe(initialRenders);
+  });
+
+  it("preserves a newer draft when a queued submission is acknowledged", async () => {
+    metadata.input_queue = true;
+    turnId = "running-turn";
+    create = () => Response.json({ error: "active run" }, { status: 409 });
+    let acknowledge!: (response: Response) => void;
+    submitInput = () => new Promise<Response>((resolve) => { acknowledge = resolve; });
+    await mount();
+    const prompt = container.querySelector<HTMLTextAreaElement>("#prompt")!;
+    const setDraft = async (text: string) => act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(prompt, text);
+      prompt.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await setDraft("First draft");
+    await act(async () => container.querySelector("form.prompt-box")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
+    expect(sendButton().disabled).toBe(true);
+    await setDraft("Next draft");
+    const submitted = requests.find((request) => request.action === "input.submit")!;
+    await act(async () => acknowledge(Response.json({ message_id: submitted.message_id, state: "accepted" })));
+    expect(prompt.value).toBe("Next draft");
+    expect(container.querySelector(".queued-content")?.textContent).toBe("First draft");
+  });
+
+  it("mounts tool output only when expanded and preserves transcript position", async () => {
+    transcript = [{ event: "message", seq: 2, role: "tool", tool_name: "run_command", content: "\u001b[32mResult\u001b[0m\n" + "output\n".repeat(500), thinking: "" }];
+    await mount();
+    await act(async () => container.querySelector<HTMLButtonElement>(".session-pane nav button")!.click());
+    const transcriptElement = container.querySelector<HTMLDivElement>(".transcript")!;
+    transcriptElement.scrollTop = 100;
+    const tool = container.querySelector(".message-tool")!;
+    const disclosure = tool.querySelector<HTMLButtonElement>(".tool-disclosure")!;
+    expect(disclosure.getAttribute("aria-expanded")).toBe("false");
+    expect(disclosure.textContent).toContain("Run Command");
+    expect(tool.querySelector("pre")).toBeNull();
+    await act(async () => disclosure.click());
+    expect(disclosure.getAttribute("aria-expanded")).toBe("true");
+    expect(tool.querySelector("pre")?.textContent).toBe("Result\n" + "output\n".repeat(500));
+    expect(transcriptElement.scrollTop).toBe(100);
+    await act(async () => disclosure.click());
+    expect(tool.querySelector("pre")).toBeNull();
+    expect(transcriptElement.scrollTop).toBe(100);
   });
 
   it("keeps sending disabled until creation is acknowledged", async () => {

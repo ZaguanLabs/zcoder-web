@@ -1,6 +1,7 @@
-type IconProps = { name: "bolt" | "plus" | "logout" | "send" | "stop" | "server" | "chevron" | "sidebar"; size?: number };
+type IconProps = { name: "bolt" | "plus" | "logout" | "send" | "stop" | "server" | "chevron" | "sidebar" | "clock"; size?: number };
 
 const paths = {
+  clock: <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>,
   bolt: <path d="M13 2 4.5 13h6L9 22l8.5-12h-6L13 2Z" />,
   plus: <path d="M12 5v14M5 12h14" />,
   logout: <path d="M10 17l5-5-5-5M15 12H3M14 3h5a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-5" />,

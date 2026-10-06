@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, KeyboardEvent, memo, useCallback, useEffect, useEffectEvent, useRef, useState } from "react";
+import { KeyboardEvent, memo, useCallback, useEffect, useEffectEvent, useId, useImperativeHandle, useRef, useState, type RefObject } from "react";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icons";
@@ -110,18 +110,44 @@ const CopyButton = memo(function CopyButton({ markdown }: { markdown: string }) 
   );
 });
 
+const ToolMessage = memo(function ToolMessage({ event }: { event: Flat }) {
+  const [expanded, setExpanded] = useState(false);
+  const outputId = useId();
+  const hasOutput = Boolean(event.content || event.thinking);
+  const label = toolName(String(event.tool_name || "Tool activity"));
+  return (
+    <article className="message message-tool">
+      <header>
+        {hasOutput ? (
+          <button type="button" className="tool-disclosure" aria-expanded={expanded} aria-controls={outputId} onClick={() => setExpanded((open) => !open)}>
+            <span className="message-glyph" aria-hidden="true">⚙</span>
+            <span className="tool-name">{label}</span>
+            {event.time ? <time>{String(event.time)}</time> : null}
+            <span className="tool-output-label">{expanded ? "Hide output" : "Show output"}</span>
+            <span aria-hidden="true">{expanded ? "▾" : "▸"}</span>
+          </button>
+        ) : <><span className="message-glyph" aria-hidden="true">⚙</span><span className="tool-name">{label}</span></>}
+      </header>
+      <div id={outputId}>
+        {expanded ? <div className="message-content message-content-pre">
+          {event.thinking ? <pre className="message-pre">{stripAnsi(String(event.thinking))}</pre> : null}
+          {event.content ? <pre className="message-pre">{stripAnsi(String(event.content))}</pre> : null}
+        </div> : null}
+      </div>
+    </article>
+  );
+});
+
 const TranscriptMessage = memo(function TranscriptMessage({ event }: { event: Flat }) {
   const [reasoningOpen, setReasoningOpen] = useState(event.reasoning_open === 1);
   const thinking = typeof event.thinking === "string" ? event.thinking : "";
   const role = String(event.role || "system");
-  const isTool = role === "tool";
-  const content = isTool ? stripAnsi(String(event.content)) : undefined;
+  if (role === "tool") return <ToolMessage event={event} />;
   return (
     <article className={`message message-${role}`}>
       <header>
         <span className="message-glyph" aria-hidden="true">{role === "assistant" ? "◆" : role === "user" ? "›" : role === "tool" ? "⚙" : "!"}</span>
-        {role !== "tool" ? <strong>{roleName(event.role)}</strong> : null}
-        {isTool ? <span className="tool-name">{toolName(String(event.tool_name ?? ""))}</span> : null}
+        <strong>{roleName(event.role)}</strong>
         {event.time ? <time>{String(event.time)}</time> : null}
       </header>
       {thinking ? (
@@ -132,11 +158,7 @@ const TranscriptMessage = memo(function TranscriptMessage({ event }: { event: Fl
           {reasoningOpen ? <div className="reasoning-content"><MarkdownContent compact>{thinking}</MarkdownContent></div> : null}
         </div>
       ) : null}
-      {content ? (
-        <div className="message-content message-content-pre">
-          <pre className="message-pre">{content}</pre>
-        </div>
-      ) : event.content ? (
+      {event.content ? (
         <div className="message-content"><MarkdownContent>{String(event.content)}</MarkdownContent></div>
       ) : null}
       {role === "assistant" && typeof event.content === "string" && event.content ? (
@@ -147,6 +169,79 @@ const TranscriptMessage = memo(function TranscriptMessage({ event }: { event: Fl
     </article>
   );
 });
+
+const TranscriptMessages = memo(function TranscriptMessages({ messages }: { messages: Flat[] }) {
+  return messages.map((message, index) => <TranscriptMessage key={`${String(message.seq ?? "local")}-${index}`} event={message} />);
+});
+
+type ComposerHandle = { clearIfMatches: (text: string) => void };
+
+function ChatComposer({ ref, promptRef, canPrompt, canSend, canStop, busy, queueSupported, mobileSessions, readingDocument, placeholder, onSubmit, onStop }: {
+  ref: RefObject<ComposerHandle | null>;
+  promptRef: RefObject<HTMLTextAreaElement | null>;
+  canPrompt: boolean;
+  canSend: boolean;
+  canStop: boolean;
+  busy: boolean;
+  queueSupported: boolean;
+  mobileSessions: boolean;
+  readingDocument: boolean;
+  placeholder: string;
+  onSubmit: (text: string, mode: InputMode) => Promise<void>;
+  onStop: () => void;
+}) {
+  const [prompt, setPrompt] = useState("");
+  const [inputMode, setInputMode] = useState<InputMode>("steer");
+  useImperativeHandle(ref, () => ({
+    clearIfMatches: (text) => setPrompt((current) => current === text ? "" : current),
+  }), []);
+
+  useEffect(() => {
+    const field = promptRef.current;
+    if (!field) return;
+    field.style.height = "auto";
+    field.style.height = `${Math.min(field.scrollHeight, 160)}px`;
+  }, [prompt, promptRef]);
+
+  useEffect(() => {
+    if (!canPrompt || readingDocument) return;
+    function routeTypingToPrompt(event: globalThis.KeyboardEvent) {
+      if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey || event.key.length !== 1) return;
+      const target = event.target;
+      if (target instanceof HTMLElement && target.closest("input, textarea, select, button, a, [contenteditable='true']")) return;
+      const field = promptRef.current;
+      if (!field) return;
+      event.preventDefault();
+      field.focus({ preventScroll: true });
+      const start = field.selectionStart ?? field.value.length;
+      const end = field.selectionEnd ?? start;
+      setPrompt((current) => `${current.slice(0, start)}${event.key}${current.slice(end)}`);
+      requestAnimationFrame(() => field.setSelectionRange(start + event.key.length, start + event.key.length));
+    }
+    window.addEventListener("keydown", routeTypingToPrompt);
+    return () => window.removeEventListener("keydown", routeTypingToPrompt);
+  }, [canPrompt, readingDocument, promptRef]);
+
+  function promptKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      event.currentTarget.form?.requestSubmit();
+    }
+  }
+
+  return (
+    <>
+      <form className="prompt-box" onSubmit={(event) => { event.preventDefault(); if (prompt && canSend) void onSubmit(prompt, inputMode); }} inert={mobileSessions ? true : undefined}>
+        <div className="composer-actions">
+          {busy && queueSupported ? <label>Send as <select aria-label="Queued input mode" value={inputMode} onChange={(event) => setInputMode(event.target.value as InputMode)}><option value="steer">Steering</option><option value="follow_up">Follow-up</option></select></label> : null}
+
+        </div>
+        <div className="prompt-row"><span aria-hidden="true">›</span><textarea ref={promptRef} id="prompt" aria-label="Message" value={prompt} onChange={(event) => setPrompt(event.target.value)} onKeyDown={promptKeyDown} disabled={!canPrompt} rows={1} autoFocus enterKeyHint="send" placeholder={placeholder} /><button type={busy && !prompt ? "button" : "submit"} disabled={busy && !prompt ? !canStop : !canSend} className={busy && !prompt ? "send-button stop-button" : "send-button"} onClick={busy && !prompt ? onStop : undefined}><Icon name={busy && !prompt ? "stop" : "send"} /> {busy && !prompt ? "Stop" : busy ? (inputMode === "steer" ? "Steer" : "Queue") : "Send"}</button></div>
+      </form>
+      <footer className="keybar"><span><kbd>Enter</kbd> Send</span><span><kbd>Shift Enter</kbd> Newline</span><span><kbd>Esc</kbd> Stop</span><span><kbd>Ctrl+B</kbd> Sidebar</span><span><kbd>Tab</kbd> Focus</span>{busy && queueSupported ? <span>{inputMode === "steer" ? "Joins after the current response and its tools." : "Waits until the current task finishes."}</span> : null}<span className="keybar-right">zweb · remote zcoder</span></footer>
+    </>
+  );
+}
 
 export function ConsoleApp() {
   const router = useRouter();
@@ -160,7 +255,6 @@ export function ConsoleApp() {
   const [messages, setMessages] = useState<Flat[]>([]);
   const [status, setStatus] = useState("Disconnected");
   const [error, setError] = useState("");
-  const [prompt, setPrompt] = useState("");
   const [busy, setBusy] = useState(false);
   const [connecting, setConnecting] = useState(true);
   const [sessionsLoading, setSessionsLoading] = useState(false);
@@ -172,7 +266,6 @@ export function ConsoleApp() {
   const [online, setOnline] = useState(true);
   const [runId, setRunId] = useState("");
   const [queue, setQueue] = useState<QueueSnapshot>(emptyQueue);
-  const [inputMode, setInputMode] = useState<InputMode>("steer");
   const [inputSending, setInputSending] = useState(false);
   const [hasNewActivity, setHasNewActivity] = useState(false);
   const [compactDrawer, setCompactDrawer] = useState(false);
@@ -192,6 +285,7 @@ export function ConsoleApp() {
   const initialServerId = useRef(serverId);
   const transcriptRef = useRef<HTMLDivElement>(null);
   const promptRef = useRef<HTMLTextAreaElement>(null);
+  const composerRef = useRef<ComposerHandle>(null);
   const connectController = useRef<AbortController | null>(null);
   const pollController = useRef<AbortController | null>(null);
   const authExpired = useRef(false);
@@ -206,7 +300,8 @@ export function ConsoleApp() {
   const canQueue = busy && queueSupported && Boolean(runId) && queue.turnId === runId && !queue.loading && !queue.error;
   const hasUncertainInput = queue.records.some((record) => record.state === "uncertain");
   const queuedInputs = queue.records.filter((record) => record.state !== "consumed" && record.state !== "discarded");
-  const queueNeedsAttention = Boolean(queue.error) || queuedInputs.some((record) => record.state === "rejected" || Boolean(record.error));
+  // Receipt polling republishes records even when their visible state is unchanged.
+  const queuedActivity = JSON.stringify(queuedInputs.map((record) => [record.request.message_id, record.state, record.error]));
   const canSend = online && !connecting && !sessionsLoading && !inputSending && !hasUncertainInput &&
     (hello?.sessions !== true || Boolean(sessionId)) &&
     (busy ? canQueue : modelReady && !approval && (!queueSupported || Boolean(sessionId) && !queue.loading && !queue.error));
@@ -560,7 +655,7 @@ export function ConsoleApp() {
         setHasNewActivity(true);
       }
     });
-  }, [messages, approval, readingDocument]);
+  }, [messages, queuedActivity, queue.pending, queue.error, queue.turnId, approval, readingDocument]);
 
   useEffect(() => {
     if (approval) approvalRef.current?.querySelector<HTMLButtonElement>("button")?.focus({ preventScroll: true });
@@ -598,32 +693,6 @@ export function ConsoleApp() {
     return () => cancelAnimationFrame(frame);
   }, [canPrompt, serverId, sessionId]);
 
-  useEffect(() => {
-    const field = promptRef.current;
-    if (!field) return;
-    field.style.height = "auto";
-    field.style.height = `${Math.min(field.scrollHeight, 160)}px`;
-  }, [prompt]);
-
-  useEffect(() => {
-    if (!canPrompt || readingDocument) return;
-    function routeTypingToPrompt(event: globalThis.KeyboardEvent) {
-      if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey || event.key.length !== 1) return;
-      const target = event.target;
-      if (target instanceof HTMLElement && target.closest("input, textarea, select, button, a, [contenteditable='true']")) return;
-      const field = promptRef.current;
-      if (!field) return;
-      event.preventDefault();
-      field.focus({ preventScroll: true });
-      const start = field.selectionStart ?? field.value.length;
-      const end = field.selectionEnd ?? start;
-      setPrompt((current) => `${current.slice(0, start)}${event.key}${current.slice(end)}`);
-      requestAnimationFrame(() => field.setSelectionRange(start + event.key.length, start + event.key.length));
-    }
-    window.addEventListener("keydown", routeTypingToPrompt);
-    return () => window.removeEventListener("keydown", routeTypingToPrompt);
-  }, [canPrompt, readingDocument]);
-
   async function startTurn(value: string, resume = false) {
     if (!serverId || busy || submissionLock.current) return;
     submissionLock.current = true;
@@ -638,7 +707,7 @@ export function ConsoleApp() {
         followingTranscript.current = true;
         setHasNewActivity(false);
         setMessages((current) => [...current, { event: "message", role: "user", content: value, thinking: "", time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) }]);
-        setPrompt((current) => current === value ? "" : current);
+        composerRef.current?.clearIfMatches(value);
       }
       let model: Flat = hello ?? {};
       if (hello?.model_status !== undefined) {
@@ -669,18 +738,18 @@ export function ConsoleApp() {
     }
   }
 
-  async function submitPrompt(event: FormEvent) {
-    event.preventDefault();
-    if (!prompt || !canSend) return;
-    if (!busy) { await startTurn(prompt); return; }
+  async function submitPrompt(value: string, inputMode: InputMode) {
+    if (!value || !canSend) return;
+    if (!busy) { await startTurn(value); return; }
     if (!canQueue || !queueClient.current || submissionLock.current) return;
     submissionLock.current = true;
     setInputSending(true);
-    const value = prompt;
     const client = queueClient.current;
+    followingTranscript.current = true;
+    setHasNewActivity(false);
     try {
       const accepted = await client.submit(runId, inputMode, value);
-      if (accepted && queueClient.current === client) setPrompt((current) => current === value ? "" : current);
+      if (accepted && queueClient.current === client) composerRef.current?.clearIfMatches(value);
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not save queued input"); }
     finally { submissionLock.current = false; setInputSending(false); }
   }
@@ -835,13 +904,6 @@ export function ConsoleApp() {
     router.refresh();
   }
 
-  function promptKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
-    if (event.key === "Enter" && !event.shiftKey) {
-      event.preventDefault();
-      event.currentTarget.form?.requestSubmit();
-    }
-  }
-
   if (sessionExpired) {
     return <main className="loading-state session-expired" role="status"><span /><p>Session expired · returning to sign in</p></main>;
   }
@@ -918,14 +980,55 @@ export function ConsoleApp() {
             {!connecting && !hello ? (
               <div className="empty-state"><Icon name="server" size={28} /><h2>{servers.length ? "Server unavailable" : "No servers configured"}</h2><p>{servers.length ? "Check the tunnel, zcoder process, and token." : "Add ZCODER_SERVERS_JSON to .env, then restart zweb."}</p>{error ? <code>{error}</code> : null}{servers.length && serverId ? <button type="button" className="retry-button" onClick={() => void connect(serverId)}>Reconnect</button> : null}</div>
             ) : null}
-            {!connecting && hello && !messages.length ? (
+            {!connecting && hello && !messages.length && !queuedInputs.length && !queue.pending ? (
               <div className="empty-state ready-empty">
                 <h2><span className="prompt-symbol" aria-hidden="true">›</span> {modelReady ? "Welcome to zcoder.zsh" : modelWarming ? "Model warming up" : "Model unavailable"}</h2>
                 <p>{modelReady ? "Ask for a change, investigation, or build. Start a new job or continue a session from the sidebar." : modelWarming ? "Sessions remain available while the model prepares." : "Sessions remain available while the model is unavailable."}</p>
                 {modelReady ? <p className="welcome-hint">Write your prompt below to get started.</p> : null}
               </div>
             ) : null}
-            {messages.map((message, index) => <TranscriptMessage key={`${String(message.seq ?? "local")}-${index}`} event={message} />)}
+            <TranscriptMessages messages={messages} />
+            {queueSupported && sessionId && (queuedInputs.length > 0 || queue.pending || queue.error) ? (
+              <section key={`${serverId}:${sessionId}`} className="queued-messages" aria-label="Queued messages">
+                {queue.error ? <p role="alert">{queue.error}</p> : null}
+                <div className="queue-records">
+                  {queuedInputs.map((record) => (
+                    <article className="message message-user message-queued" key={record.request.message_id} data-input-state={record.state}>
+                      <div className="message-content queued-content">{record.request.text}</div>
+                      {record.error ? <p role="alert">{record.error}</p> : null}
+                      <footer className="queue-actions">
+                        <span className="queued-status" title={record.request.mode === "steer" ? "Joins after the current response and its tools" : "Waits until the current task finishes"}>
+                          <Icon name="clock" size={13} />
+                          {record.state === "uncertain" ? "Unconfirmed" : record.state === "rejected" ? "Rejected" : !queue.turnId ? "Paused" : "Queued"}
+                          {record.request.mode === "steer" ? " · Steering" : ""}
+                        </span>
+                        {record.state === "uncertain" ? <button type="button" disabled={inputSending || !online} onClick={async () => {
+                          if (!queueClient.current || inputSending) return;
+                          setInputSending(true);
+                          try {
+                            if (await queueClient.current.retry(record.request.message_id)) composerRef.current?.clearIfMatches(record.request.text);
+                          } finally { setInputSending(false); }
+                        }}>Retry exact submission</button> : null}
+                        {["accepted", "uncertain"].includes(record.state) ? <>
+                          {record.state === "uncertain" || record.error ? <button type="button" disabled={!online} onClick={() => void queueClient.current?.check(record.request.message_id)}>Check status</button> : null}
+                          <button type="button" disabled={!online || inputSending} onClick={() => void queueClient.current?.drop(record.request.message_id)} aria-label="Remove queued message" title="Remove queued message">×</button>
+                        </> : <button type="button" onClick={() => { try { queueClient.current?.dismiss(record.request.message_id); } catch { setError("Could not update saved input"); } }}>Dismiss</button>}
+                      </footer>
+                    </article>
+                  ))}
+                </div>
+                <details className="queue-details">
+                  <summary>Queue details</summary>
+                  {queue.pending ? <pre className="queue-listing">{queue.pending}</pre> : null}
+                  <div className="queue-actions queue-recovery">
+                    <button type="button" disabled={!online} onClick={() => void queueClient.current?.refresh()}>Refresh queue</button>
+                  </div>
+                </details>
+                {!busy && !queue.turnId && (queue.pending || queue.records.some((record) => record.state === "accepted")) ? (
+                  <div className="queue-actions queue-recovery"><button type="button" disabled={!online || !modelReady || queue.loading} onClick={() => void startTurn("/queue resume", true)}>Resume pending input</button></div>
+                ) : null}
+              </section>
+            ) : null}
           </div>
           {hasNewActivity ? <button type="button" className="transcript-jump" onClick={jumpToLatestActivity}>Jump to latest activity</button> : null}
           </DocumentReader>
@@ -942,51 +1045,7 @@ export function ConsoleApp() {
           ) : null}
         </section>
       </div>
-      <form className="prompt-box" onSubmit={submitPrompt} inert={mobileSessions ? true : undefined}>
-        {queueSupported && sessionId && (queuedInputs.length > 0 || queue.pending || queue.error) ? (
-          <details key={`${serverId}:${sessionId}`} className="queue-panel" open={queueNeedsAttention ? true : undefined}>
-            <summary>
-              <span className="queue-label">{queueNeedsAttention ? "Queue needs attention" : "Queue"}{queuedInputs.length > 0 ? ` · ${queuedInputs.length}` : ""}</span>
-              {queuedInputs[0] ? <span className="queue-preview">{queuedInputs[0].request.mode === "steer" ? "Steering" : "Follow-up"} · {queuedInputs[0].request.text}</span> : null}
-              {!queue.turnId && (queue.pending || queuedInputs.some((record) => record.state === "accepted")) ? <span className="queue-status">Paused</span> : null}
-            </summary>
-            {queue.error ? <p role="alert">{queue.error}</p> : null}
-            <div className="queue-records">
-              {queuedInputs.map((record) => (
-                <div className="queue-item" key={record.request.message_id}>
-                  <div className="queue-item-label">{record.request.mode === "steer" ? "Steering" : "Follow-up"}{record.state !== "accepted" ? <span>{record.state === "uncertain" ? "Unconfirmed" : "Rejected"}</span> : null}</div>
-                  <pre>{record.request.text}</pre>
-                  {record.error ? <p role="alert">{record.error}</p> : null}
-                  <div className="queue-actions">
-                    {record.state === "uncertain" ? <button type="button" disabled={inputSending || !online} onClick={async () => {
-                      if (!queueClient.current || inputSending) return;
-                      setInputSending(true);
-                      try {
-                        if (await queueClient.current.retry(record.request.message_id)) setPrompt((current) => current === record.request.text ? "" : current);
-                      } finally { setInputSending(false); }
-                    }}>Retry exact submission</button> : null}
-                    {["accepted", "uncertain"].includes(record.state) ? <>
-                      <button type="button" disabled={!online} onClick={() => void queueClient.current?.check(record.request.message_id)}>Check status</button>
-                      <button type="button" disabled={!online || inputSending} onClick={() => void queueClient.current?.drop(record.request.message_id)}>Discard</button>
-                    </> : <button type="button" onClick={() => { try { queueClient.current?.dismiss(record.request.message_id); } catch { setError("Could not update saved input"); } }}>Dismiss</button>}
-                  </div>
-                </div>
-              ))}
-            </div>
-            {queue.pending ? <details><summary>Server pending listing</summary><pre className="queue-listing">{queue.pending}</pre></details> : null}
-            <div className="queue-actions">
-              <button type="button" disabled={!online} onClick={() => void queueClient.current?.refresh()}>Refresh queue</button>
-              {!busy && !queue.turnId && (queue.pending || queue.records.some((record) => record.state === "accepted")) ? <button type="button" disabled={!online || !modelReady || queue.loading} onClick={() => void startTurn("/queue resume", true)}>Resume pending input</button> : null}
-            </div>
-          </details>
-        ) : null}
-        <div className="composer-actions">
-          {busy && queueSupported ? <label>Send as <select aria-label="Queued input mode" value={inputMode} onChange={(event) => setInputMode(event.target.value as InputMode)}><option value="steer">Steering</option><option value="follow_up">Follow-up</option></select></label> : null}
-
-        </div>
-        <div className="prompt-row"><span aria-hidden="true">›</span><textarea ref={promptRef} id="prompt" aria-label="Message" value={prompt} onChange={(event) => setPrompt(event.target.value)} onKeyDown={promptKeyDown} disabled={!canPrompt} rows={1} autoFocus enterKeyHint="send" placeholder={busy ? queueSupported ? "Add steering or a follow-up…" : "Draft your next message…" : modelReady ? "Describe the job" : modelWarming ? "Model is warming up…" : "Model unavailable"} /><button type={busy && !prompt ? "button" : "submit"} disabled={!canSend && !busy} className={busy && !prompt ? "send-button stop-button" : "send-button"} onClick={busy && !prompt ? cancelTurn : undefined}><Icon name={busy && !prompt ? "stop" : "send"} /> {busy && !prompt ? "Stop" : busy ? (inputMode === "steer" ? "Steer" : "Queue") : "Send"}</button></div>
-      </form>
-      <footer className="keybar"><span><kbd>Enter</kbd> Send</span><span><kbd>Shift Enter</kbd> Newline</span><span><kbd>Esc</kbd> Stop</span><span><kbd>Ctrl+B</kbd> Sidebar</span><span><kbd>Tab</kbd> Focus</span>{busy && queueSupported ? <span>{inputMode === "steer" ? "Joins after the current response and its tools." : "Waits until the current task finishes."}</span> : null}<span className="keybar-right">zweb · remote zcoder</span></footer>
+      <ChatComposer ref={composerRef} promptRef={promptRef} canPrompt={canPrompt} canSend={canSend} canStop={online && !connecting} busy={busy} queueSupported={queueSupported} mobileSessions={mobileSessions} readingDocument={readingDocument} placeholder={busy ? queueSupported ? "Add steering or a follow-up…" : "Draft your next message…" : modelReady ? "Describe the job" : modelWarming ? "Model is warming up…" : "Model unavailable"} onSubmit={submitPrompt} onStop={cancelTurn} />
     </main>
   );
 }
