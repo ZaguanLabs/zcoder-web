@@ -353,7 +353,7 @@ export function ConsoleApp() {
       setMessages(transcript);
       setMobileSessions(false);
       if (select) await refreshSessions(id, signal);
-    } finally { if (select) setSessionsLoading(false); }
+    } finally { setSessionsLoading(false); }
   }, [refreshSessions, rpc]);
 
   const pollEvents = useCallback(async (id: string, targetSession: string, supportsSessions: boolean, turnId: string, reattached = false) => {
@@ -372,13 +372,6 @@ export function ConsoleApp() {
     };
     try {
       while (!controller.signal.aborted) {
-        // A hidden page polls nothing. The event cursor is durable upstream, so
-        // the run resumes from the seq it stopped at instead of losing events.
-        if (!isPageVisible()) {
-          await waitForPageVisible(controller.signal);
-          // Coming back is a fresh start, not another failed attempt.
-          reconnectAttempts = 0;
-        }
         let event: Flat;
         try {
           event = await rpc(id, { action: "events.next", after: cursor }, controller.signal) as Flat;
