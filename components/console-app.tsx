@@ -223,7 +223,7 @@ function ChatComposer({ ref, promptRef, canPrompt, canSend, canStop, busy, queue
   }, [canPrompt, readingDocument, promptRef]);
 
   function promptKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
-    if (event.key === "Enter" && !event.shiftKey) {
+    if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && window.matchMedia("(hover: hover) and (pointer: fine)").matches) {
       event.preventDefault();
       event.currentTarget.form?.requestSubmit();
     }
@@ -236,7 +236,7 @@ function ChatComposer({ ref, promptRef, canPrompt, canSend, canStop, busy, queue
           {busy && queueSupported ? <label>Send as <select aria-label="Queued input mode" value={inputMode} onChange={(event) => setInputMode(event.target.value as InputMode)}><option value="steer">Steering</option><option value="follow_up">Follow-up</option></select></label> : null}
 
         </div>
-        <div className="prompt-row"><span aria-hidden="true">›</span><textarea ref={promptRef} id="prompt" aria-label="Message" value={prompt} onChange={(event) => setPrompt(event.target.value)} onKeyDown={promptKeyDown} disabled={!canPrompt} rows={1} autoFocus enterKeyHint="send" placeholder={placeholder} /><button type={busy && !prompt ? "button" : "submit"} disabled={busy && !prompt ? !canStop : !canSend} className={busy && !prompt ? "send-button stop-button" : "send-button"} onClick={busy && !prompt ? onStop : undefined}><Icon name={busy && !prompt ? "stop" : "send"} /> {busy && !prompt ? "Stop" : busy ? (inputMode === "steer" ? "Steer" : "Queue") : "Send"}</button></div>
+        <div className="prompt-row"><span aria-hidden="true">›</span><textarea ref={promptRef} id="prompt" aria-label="Message" value={prompt} onChange={(event) => setPrompt(event.target.value)} onKeyDown={promptKeyDown} disabled={!canPrompt} rows={1} enterKeyHint="enter" placeholder={placeholder} /><button type={busy && !prompt ? "button" : "submit"} disabled={busy && !prompt ? !canStop : !canSend} aria-label={busy && !prompt ? "Stop" : busy ? (inputMode === "steer" ? "Steer" : "Queue") : "Send"} className={busy && !prompt ? "send-button stop-button" : "send-button"} onClick={busy && !prompt ? onStop : undefined}><Icon name={busy && !prompt ? "stop" : "send"} /> {busy && !prompt ? "Stop" : busy ? (inputMode === "steer" ? "Steer" : "Queue") : "Send"}</button></div>
       </form>
       <footer className="keybar"><span><kbd>Enter</kbd> Send</span><span><kbd>Shift Enter</kbd> Newline</span><span><kbd>Esc</kbd> Stop</span><span><kbd>Ctrl+B</kbd> Sidebar</span><span><kbd>Tab</kbd> Focus</span>{busy && queueSupported ? <span>{inputMode === "steer" ? "Joins after the current response and its tools." : "Waits until the current task finishes."}</span> : null}<span className="keybar-right">zweb · remote zcoder</span></footer>
     </>
@@ -613,22 +613,19 @@ export function ConsoleApp() {
 
   useEffect(() => {
     const mobile = window.matchMedia("(max-width: 860px)");
-    const shortMobile = window.matchMedia("(max-width: 860px) and (max-height: 620px)");
     const updateMobile = () => {
+      setCompactDrawer(mobile.matches);
       if (sidebarRef.current?.contains(document.activeElement)) {
         const target = mobile.matches ? mobileSidebarToggleRef : sidebarToggleRef;
         requestAnimationFrame(() => target.current?.focus({ preventScroll: true }));
       }
       if (!mobile.matches) setMobileSessions(false);
     };
-    const updateCompact = () => setCompactDrawer(shortMobile.matches);
-    setCompactDrawer(shortMobile.matches);
+    setCompactDrawer(mobile.matches);
     if (!mobile.matches) setMobileSessions(false);
     mobile.addEventListener?.("change", updateMobile);
-    shortMobile.addEventListener?.("change", updateCompact);
     return () => {
       mobile.removeEventListener?.("change", updateMobile);
-      shortMobile.removeEventListener?.("change", updateCompact);
     };
   }, []);
 
@@ -681,7 +678,7 @@ export function ConsoleApp() {
   }), [connect, connecting, refreshSessions, serverId]);
 
   useEffect(() => {
-    if (!canPrompt) return;
+    if (!canPrompt || window.matchMedia("(max-width: 860px)").matches) return;
     const frame = requestAnimationFrame(() => promptRef.current?.focus({ preventScroll: true }));
     return () => cancelAnimationFrame(frame);
   }, [canPrompt, serverId, sessionId]);
@@ -903,7 +900,7 @@ export function ConsoleApp() {
 
   return (
     <main className="console-shell">
-      <header className="topbar">
+      <header className="topbar" inert={mobileSessions ? true : undefined}>
         <button ref={sidebarToggleRef} type="button" className="sidebar-toggle" onClick={toggleSidebar} aria-label={sidebarHidden ? "Show sidebar" : "Hide sidebar"} aria-expanded={!sidebarHidden} aria-controls="session-drawer" aria-keyshortcuts="Control+b" title={`${sidebarHidden ? "Show" : "Hide"} sidebar (Ctrl+B)`}><Icon name="sidebar" size={18} /></button>
         <div className="wordmark"><span><Icon name="bolt" size={17} /></span> zweb <small>/ zcoder.zsh</small></div>
         <div className="active-model" title={hello ? String(hello.model) : undefined}>{hello ? String(hello.model) : "No model connected"}</div>
@@ -917,22 +914,19 @@ export function ConsoleApp() {
         <button type="button" className="icon-button logout-button" onClick={logout} aria-label="Log out" title="Log out"><Icon name="logout" /></button>
       </header>
 
-      <div className="mobile-bar">
-        <button ref={mobileSidebarToggleRef} type="button" className="mobile-session-trigger" aria-expanded={mobileSessions} aria-controls="session-drawer" aria-keyshortcuts="Control+b" title="Toggle sessions (Ctrl+B)" onClick={toggleSidebar}>
-          <Icon name="server" /> <span className="mobile-sessions-label">Sessions</span> <span className="mobile-session-count">{sessions.length}</span>
+      <header className="mobile-bar" inert={mobileSessions ? true : undefined}>
+        <button ref={mobileSidebarToggleRef} type="button" className="mobile-session-trigger" aria-label="Open sessions" aria-expanded={mobileSessions} aria-controls="session-drawer" aria-keyshortcuts="Control+b" onClick={toggleSidebar}>
+          <Icon name="sidebar" size={22} /><span className="sr-only">Sessions</span>
         </button>
-        <label className="mobile-server-switcher">
-          <span className="sr-only">Server</span>
-          <select value={serverId} aria-label="Active server" disabled={busy || inputSending || sessionsLoading} onChange={(event) => { const id = event.target.value; localStorage.setItem("zcoder-server-id", id); setMobileSessions(false); setServerId(id); void connect(id); }}>
-            {servers.map((server) => <option key={server.id} value={server.id}>{server.name}</option>)}
-          </select>
-        </label>
-      </div>
+        <div className="mobile-conversation-title"><strong>{selectedSessionTitle}</strong><span>{servers.find((server) => server.id === serverId)?.name || "zweb"} <span className={`mobile-status state-${displayStatus.toLowerCase().replaceAll(" ", "-")}`} role="status">· {displayStatus}</span></span></div>
+        <button type="button" className="mobile-new-session" aria-label="New session" disabled={busy || inputSending || sessionsLoading || hello?.sessions !== true} onClick={createSession}><Icon name="plus" size={22} /></button>
+      </header>
 
       <div className={`workbench ${sidebarHidden ? "sidebar-hidden" : ""}`}>
         <button type="button" className={`session-backdrop ${mobileSessions ? "visible" : ""}`} aria-label="Close sessions" tabIndex={-1} onClick={() => closeMobileSessions()} />
         <aside ref={sidebarRef} id="session-drawer" className={`session-pane ${mobileSessions ? "mobile-open" : ""}`} aria-labelledby="session-drawer-title" role={mobileSessions ? "dialog" : undefined} aria-modal={mobileSessions ? true : undefined} onKeyDown={handleDrawerKeyDown}>
           <div className="pane-title"><span id="session-drawer-title"><span className="sessions-label">Sessions</span> ({sessions.length})</span><button ref={drawerCloseRef} type="button" className="drawer-close" aria-label="Close sessions" onClick={() => closeMobileSessions()}>×</button></div>
+          <label className="drawer-server-switcher"><span>Server</span><select value={serverId} aria-label="Session server" disabled={busy || inputSending || sessionsLoading} onChange={(event) => { const id = event.target.value; localStorage.setItem("zcoder-server-id", id); setServerDetailsOpen(false); setServerId(id); void connect(id); }}>{servers.map((server) => <option key={server.id} value={server.id}>{server.name}</option>)}</select></label>
           <button type="button" className="new-session" disabled={busy || inputSending || sessionsLoading || hello?.sessions !== true} onClick={createSession}><Icon name="plus" /> New session</button>
           <nav aria-label="Remote sessions">
             {sessions.map((session) => {
@@ -963,6 +957,7 @@ export function ConsoleApp() {
               </dl>
             </section>
           ) : null}
+          <button type="button" className="mobile-logout" onClick={logout}><Icon name="logout" /> Log out</button>
         </aside>
 
         <section className="transcript-pane" aria-labelledby="transcript-title" inert={mobileSessions ? true : undefined}>
@@ -976,7 +971,7 @@ export function ConsoleApp() {
             {!connecting && hello && !messages.length && !queuedInputs.length && !queue.pending ? (
               <div className="empty-state ready-empty">
                 <h2><span className="prompt-symbol" aria-hidden="true">›</span> {modelReady ? "Welcome to zcoder.zsh" : modelWarming ? "Model warming up" : "Model unavailable"}</h2>
-                <p>{modelReady ? "Ask for a change, investigation, or build. Start a new job or continue a session from the sidebar." : modelWarming ? "Sessions remain available while the model prepares." : "Sessions remain available while the model is unavailable."}</p>
+                <p>{modelReady ? "Ask for a change, investigation, or build. Start a new job or continue a saved session." : modelWarming ? "Sessions remain available while the model prepares." : "Sessions remain available while the model is unavailable."}</p>
                 {modelReady ? <p className="welcome-hint">Write your prompt below to get started.</p> : null}
               </div>
             ) : null}

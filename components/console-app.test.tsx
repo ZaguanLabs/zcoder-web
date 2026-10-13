@@ -25,7 +25,7 @@ describe("console keyboard controls", () => {
     sessionStorage.clear();
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     vi.stubGlobal("matchMedia", (query: string) => ({
-      get matches() { return query.includes("max-height") ? compact : mobile; },
+      get matches() { return query.includes("hover") ? !mobile : query.includes("max-height") ? compact : mobile; },
       addEventListener: (_type: string, listener: () => void) => mediaListeners.add(listener),
       removeEventListener: (_type: string, listener: () => void) => mediaListeners.delete(listener),
     }));
@@ -147,14 +147,35 @@ describe("console keyboard controls", () => {
     expect(document.activeElement).toBe(container.querySelector(".mobile-session-trigger"));
   });
 
+  it("keeps mobile Enter for newlines and the send button explicitly labelled", async () => {
+    mobile = true;
+    await press("x", {}, document.body);
+    const prompt = container.querySelector<HTMLTextAreaElement>("textarea")!;
+    const enter = await press("Enter", {}, prompt);
+    expect(enter.defaultPrevented).toBe(false);
+    expect(requests.some((request) => request.action === "turn.start")).toBe(false);
+    expect(container.querySelector(".send-button")?.getAttribute("aria-label")).toBe("Send");
+  });
+
+  it("keeps desktop Enter sending and lets input composition finish", async () => {
+    await press("x", {}, document.body);
+    const prompt = container.querySelector<HTMLTextAreaElement>("textarea")!;
+    const composing = await press("Enter", { isComposing: true }, prompt);
+    expect(composing.defaultPrevented).toBe(false);
+    expect(requests.some((request) => request.action === "turn.start")).toBe(false);
+    const enter = await press("Enter", {}, prompt);
+    expect(enter.defaultPrevented).toBe(true);
+    expect(requests).toContainEqual({ action: "turn.start", prompt: "x" });
+  });
+
   it("shows the selected session beside the transcript heading", () => {
     expect(container.querySelector("#transcript-title")?.textContent).toContain("Test session");
     expect(container.querySelector("#transcript-title")?.getAttribute("aria-label")).toContain("session Test session");
   });
 
-  it("discloses secondary server facts in a short mobile drawer", async () => {
+  it("discloses secondary server facts in the mobile session picker", async () => {
     mobile = true;
-    compact = true;
+    compact = false;
     await act(async () => mediaListeners.forEach((listener) => listener()));
     await press("b", { ctrlKey: true });
 

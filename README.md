@@ -55,7 +55,7 @@ Terminate TLS in a trusted reverse proxy in front of `127.0.0.1:3000`. Productio
 
 ## Mobile and installation
 
-zweb is a responsive Progressive Web App. On a phone, open the HTTPS production URL and use your browser's **Add to Home Screen** or **Install app** action. It opens as a standalone app with mobile safe-area support, touch-sized controls, a slide-over session list, and the same server selector available on desktop.
+zweb is a responsive Progressive Web App. On a phone, open the HTTPS production URL and use your browser's **Add to Home Screen** or **Install app** action. It opens as a standalone app with mobile safe-area support, touch-sized controls, a conversation-first layout, and a full-screen session picker. Open Sessions to switch servers, resume conversations, inspect server details, or log out. Documents expand on demand; the composer stays at the bottom and the keyboard opens when you tap it. On touch devices, Enter adds a newline and the send button submits your message.
 
 Backgrounding the app stops its polling. The event cursor is durable on the server, so a run keeps going while zweb is hidden and the transcript resumes from the seq it stopped at when you return. Coming back also re-reads the session list, and reconnects on its own if the event stream had exhausted its retries while the page was frozen.
 

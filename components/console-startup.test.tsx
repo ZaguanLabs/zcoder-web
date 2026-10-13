@@ -96,6 +96,13 @@ describe("console startup", () => {
     await act(async () => root.render(<ConsoleApp />));
   }
 
+  it("leaves the keyboard closed when a mobile conversation becomes ready", async () => {
+    vi.stubGlobal("matchMedia", () => ({ matches: true }));
+    await mount();
+    expect(container.querySelector("textarea")?.disabled).toBe(false);
+    expect(document.activeElement).not.toBe(container.querySelector("textarea"));
+  });
+
   function sendButton() {
     return container.querySelector<HTMLButtonElement>(".send-button")!;
   }

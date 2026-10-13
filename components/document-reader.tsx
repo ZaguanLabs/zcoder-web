@@ -24,6 +24,7 @@ export function DocumentReader({ serverId, supported, available, approvalPending
   const [documents, setDocuments] = useState<Document[]>([]);
   const [activePath, setActivePath] = useState("");
   const [path, setPath] = useState("");
+  const [toolsOpen, setToolsOpen] = useState(false);
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -76,6 +77,9 @@ export function DocumentReader({ serverId, supported, available, approvalPending
 
   return (
     <div className="document-reader" inert={approvalPending ? true : undefined}>
+      <div className={`document-controls ${toolsOpen || activePath ? "expanded" : ""}`}>
+      <button type="button" className="mobile-document-toggle" aria-expanded={activePath ? undefined : toolsOpen} aria-controls={`${panelId}-tools`} onClick={() => { if (activePath) { select(""); setToolsOpen(false); } else setToolsOpen((value) => !value); }}>{activePath ? "Back to conversation" : "Documents"} <span aria-hidden="true">{activePath ? "" : toolsOpen ? "−" : "+"}</span></button>
+      <div id={`${panelId}-tools`} className="document-tools">
       <div className="document-toolbar">
         {documents.length ? <nav className="document-tabs" aria-label="Workspace views">
           <button type="button" aria-current={!activePath ? "page" : undefined} onClick={() => select("")}>Coding</button>
@@ -98,6 +102,8 @@ export function DocumentReader({ serverId, supported, available, approvalPending
         </> : <p role="status">This server does not support document reading. Update the zcoder server to enable it.</p>}
       </form> : null}
       {error ? <div className="document-error" role="alert">{error}<button type="button" aria-label="Dismiss document error" onClick={() => setError("")}>×</button></div> : null}
+      </div>
+      </div>
       <div className="coding-view" hidden={Boolean(activePath)}>{children}</div>
       {documents.map((document) => <section key={document.path} className="document-view" hidden={activePath !== document.path} aria-label={document.path} tabIndex={0}>
         <header><strong>{document.path}</strong><span>Read only</span></header>
