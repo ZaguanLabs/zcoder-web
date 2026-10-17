@@ -55,11 +55,14 @@ describe("console startup", () => {
     vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => { callback(0); return 1; });
     vi.stubGlobal("cancelAnimationFrame", vi.fn());
     vi.stubGlobal("fetch", vi.fn(async (url: string, options?: RequestInit) => {
-      if (url === "/api/servers") return Response.json([{ id: "test", name: "Test" }]);
+      if (url === "/api/servers") return Response.json([{ id: "test", name: "Test" }, { id: "other", name: "Other" }]);
       const body = JSON.parse(String(options?.body));
       requests.push(body);
       switch (body.action) {
         case "hello": return Response.json(metadata);
+        case "model.get":
+        case "model.ensure": return Response.json({ model_status: "ready" });
+        case "turn.start": return Response.json({ turn_id: "new-turn" });
         case "session.new": return create();
         case "sessions.list": return list();
         case "session.select": return Response.json({ ok: true });
@@ -89,6 +92,7 @@ describe("console startup", () => {
   afterEach(async () => {
     await act(async () => root.unmount());
     container.remove();
+    vi.useRealTimers();
     vi.unstubAllGlobals();
   });
 
@@ -106,6 +110,80 @@ describe("console startup", () => {
   function sendButton() {
     return container.querySelector<HTMLButtonElement>(".send-button")!;
   }
+
+  async function switchServer(selector = "#server-select") {
+    await act(async () => {
+      const select = container.querySelector<HTMLSelectElement>(selector)!;
+      select.value = "other";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+  }
+
+  it.each([
+    "#server-select",
+    '[aria-label="Session server"]',
+    '[aria-label="Active server"]',
+  ])("enables sending after switching with %s to a server without a current session", async (selector) => {
+    metadata.input_queue = true;
+    await mount();
+    list = () => Response.json([]);
+
+    await switchServer(selector);
+
+    expect(localStorage.getItem("zcoder-server-id")).toBe("other");
+    expect(requests.filter((request) => request.action === "session.new")).toHaveLength(2);
+    expect(sendButton().disabled).toBe(false);
+    const prompt = container.querySelector<HTMLTextAreaElement>("#prompt")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(prompt, "Use the selected server");
+      prompt.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => sendButton().click());
+
+    expect(fetch).toHaveBeenCalledWith("/api/servers/other/rpc", expect.objectContaining({
+      body: JSON.stringify({ action: "turn.start", prompt: "Use the selected server" }),
+    }));
+  });
+
+  it("creates a session after switching when saved history has no current conversation", async () => {
+    await mount();
+    list = () => Response.json([{ ...history[0], current: 0 }]);
+
+    await switchServer();
+
+    expect(requests.filter((request) => request.action === "session.new")).toHaveLength(2);
+    expect(requests.some((request) => request.action === "session.load")).toBe(false);
+    expect(sendButton().disabled).toBe(false);
+  });
+
+  it("retains the selected conversation when switching to a server with a current session", async () => {
+    metadata.input_queue = true;
+    await mount();
+
+    await switchServer();
+
+    expect(requests.filter((request) => request.action === "session.new")).toHaveLength(1);
+    expect(requests).toContainEqual({ action: "session.load", id: "100_200" });
+    expect(requests).toContainEqual({ action: "input.list", session_id: "100_200" });
+    expect(sendButton().disabled).toBe(false);
+  });
+
+  it("enables sending without a refresh when the switched server finishes warming up", async () => {
+    vi.useFakeTimers();
+    metadata.input_queue = true;
+    await mount();
+    metadata.model_status = "warming";
+    list = () => Response.json([]);
+
+    await switchServer();
+    expect(sendButton().disabled).toBe(true);
+    expect(container.querySelector(".connection-state")?.textContent).toBe("Warming up");
+
+    await act(async () => vi.advanceTimersByTimeAsync(700));
+
+    expect(container.querySelector(".connection-state")?.textContent).toBe("Ready");
+    expect(sendButton().disabled).toBe(false);
+  });
 
   function saveQueue(states: InputRecord["state"][]) {
     metadata.input_queue = true;

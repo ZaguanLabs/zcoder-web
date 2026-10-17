@@ -498,7 +498,20 @@ export function ConsoleApp() {
           const list = await refreshSessions(id, controller.signal);
           if (controller.signal.aborted) return;
           const current = list.find((session) => session.current === 1);
-          if (current && typeof current.id === "string") await loadSession(id, current.id, false, controller.signal);
+          if (current && typeof current.id === "string" && current.id) {
+            await loadSession(id, current.id, false, controller.signal);
+          } else {
+            // Switching servers can reach one with no selected conversation.
+            // Establish a session so a ready model also has somewhere to send.
+            const created = await rpc(id, { action: "session.new" }, controller.signal) as Flat;
+            if (controller.signal.aborted) return;
+            if (typeof created.id !== "string" || !created.id) throw new Error("Server returned an invalid session id");
+            setSessionId(created.id);
+            loadingSession = false;
+            setSessionsLoading(false);
+            setSessionsListing(true);
+            await refreshSessions(id, controller.signal);
+          }
         })().catch((cause) => {
           if (!controller.signal.aborted && !isAbortError(cause)) setError(cause instanceof Error ? cause.message : "Could not load sessions");
         }).finally(() => {
