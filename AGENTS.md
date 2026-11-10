@@ -15,11 +15,11 @@ Goal of this project is to create a lean and fast application.
 
 When I tell you to push and deploy, you push to git, then `ssh` to `fidelity` and use `zsh -cli` to run the scripts successfully, cd to `/shared/sites/stig/zweb` and run the script `./scripts/pm2-restart.sh`. This script pulls from git and rebuilds the project, then restarts the `pm2` process. You can also run `./scripts/pm2-restart.sh --rebuild` to only rebuild without pulling from git.
 
-# Atlas Scout
+# Bit Lantern (bitlantern mcp server)
 
 ## Code navigation
 
-When Atlas Scout MCP tools are available, **always** use them as the primary navigation path for repository
+When Bit Lantern MCP tools are available, **always** use them as the primary navigation path for repository
 investigations that need the correct file, source range, or structural relationship. This includes
 definitions, named symbols, unknown locations, callers, references, dependency paths, architecture,
 and edit impact.
@@ -30,9 +30,9 @@ and edit impact.
   needed.
 - Use `symbol_references`, `symbol_graph`, `symbol_trace`, `symbol_path`, or `edit_impact` for the
   corresponding structural question.
-- Read the exact source ranges returned by Atlas Scout before drawing conclusions or editing.
+- Read the exact source ranges returned by Bit Lantern before drawing conclusions or editing.
 - Use `rg` or other raw-text search for literals, regexes, unmodeled text, unsupported/partial
-  language coverage, an explicit user request, or after focused Atlas Scout queries miss.
+  language coverage, an explicit user request, or after focused Bit Lantern queries miss.
 
-Do not use shell text search as the default substitute for Atlas Scout when the task is structural
+Do not use shell text search as the default substitute for Bit Lantern when the task is structural
 code navigation.

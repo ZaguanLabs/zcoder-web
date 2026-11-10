@@ -9,3 +9,6 @@ node_modules/
 npm-debug.log*
 coverage/
 .pnpm-store/
+
+# Bit Lantern local data
+.bitlantern/
