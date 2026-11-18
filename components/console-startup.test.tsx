@@ -29,6 +29,7 @@ describe("console startup", () => {
   let create: () => Response | Promise<Response>;
   let list: () => Response | Promise<Response>;
   let transcript: Record<string, unknown>[];
+  let nextEvent: (() => Promise<Response>) | undefined;
   let turnId: string;
   let receipts: Record<string, string>;
   let pending: string;
@@ -47,6 +48,7 @@ describe("console startup", () => {
     create = () => Response.json({ id: "100_201" });
     list = () => Response.json(history);
     transcript = [{ event: "message", seq: 1, role: "user", content: "Existing message", thinking: "" }];
+    nextEvent = undefined;
     Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
     sessionStorage.clear();
     localStorage.clear();
@@ -78,7 +80,7 @@ describe("console startup", () => {
           receipts[String(body.message_id)] = "discarded";
           return Response.json({ message_id: body.message_id, state: "discarded" });
         case "cancel": return Response.json({ ok: true, continued: true });
-        case "events.next": return new Promise<Response>((_, reject) => {
+        case "events.next": return nextEvent?.() ?? new Promise<Response>((_, reject) => {
           options?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
         });
         default: throw new Error(`Unexpected action: ${body.action}`);
@@ -324,6 +326,52 @@ describe("console startup", () => {
     await act(async () => disclosure.click());
     expect(tool.querySelector("pre")).toBeNull();
     expect(transcriptElement.scrollTop).toBe(100);
+  });
+
+  it("adds a live result to the already expanded call", async () => {
+    const call = { event: "message", seq: 1, role: "tool", content: '→ read_file {"path":"a.txt"}', thinking: "" };
+    let deliverResult!: (response: Response) => void;
+    nextEvent = async () => {
+      nextEvent = () => new Promise<Response>((resolve) => { deliverResult = resolve; });
+      return Response.json(call);
+    };
+    await mount();
+    const prompt = container.querySelector<HTMLTextAreaElement>("#prompt")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(prompt, "Read a.txt");
+      prompt.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => sendButton().click());
+    const disclosure = container.querySelector<HTMLButtonElement>(".tool-disclosure")!;
+    await act(async () => disclosure.click());
+    expect(disclosure.textContent).toContain("Read File");
+    await act(async () => deliverResult(Response.json({ ...call, seq: 2, content: "✓ read_file\nFile contents" })));
+    expect(container.querySelectorAll(".message-tool")).toHaveLength(1);
+    expect(disclosure.textContent).toContain("Completed");
+    expect(disclosure.getAttribute("aria-expanded")).toBe("true");
+    expect(Array.from(container.querySelectorAll(".message-tool pre"), (pre) => pre.textContent)).toEqual([
+      call.content, "✓ read_file\nFile contents",
+    ]);
+  });
+
+  it("pairs repeated calls individually in history and keeps unmatched results visible", async () => {
+    transcript = [
+      '→ read_file {"path":"a.txt"}', "✓ read_file\nFirst file",
+      '→ read_file {"path":"b.txt"}', "✗ read_file\nMissing file",
+      '→ read_file {"path":"c.txt"}', "✓ list_files\nDirectory listing",
+    ].map((content, index) => ({ event: "message", seq: index + 1, role: "tool", content, thinking: "" }));
+    await mount();
+    await act(async () => container.querySelector<HTMLButtonElement>(".session-pane nav button")!.click());
+    const rows = Array.from(container.querySelectorAll(".message-tool"));
+    expect(rows).toHaveLength(4);
+    expect(rows[1].querySelector("header")?.textContent).toContain("Failed");
+    await act(async () => rows.forEach((row) => row.querySelector("button")!.click()));
+    expect(rows.map((row) => Array.from(row.querySelectorAll("pre"), (pre) => pre.textContent))).toEqual([
+      ['→ read_file {"path":"a.txt"}', "✓ read_file\nFirst file"],
+      ['→ read_file {"path":"b.txt"}', "✗ read_file\nMissing file"],
+      ['→ read_file {"path":"c.txt"}'],
+      ["✓ list_files\nDirectory listing"],
+    ]);
   });
 
   it("keeps sending disabled until creation is acknowledged", async () => {

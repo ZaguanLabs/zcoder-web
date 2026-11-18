@@ -110,11 +110,11 @@ const CopyButton = memo(function CopyButton({ markdown }: { markdown: string }) 
   );
 });
 
-const ToolMessage = memo(function ToolMessage({ event }: { event: Flat }) {
+const ToolMessage = memo(function ToolMessage({ event, name, result }: { event: Flat; name?: string; result?: Flat }) {
   const [expanded, setExpanded] = useState(false);
   const outputId = useId();
   const hasOutput = Boolean(event.content || event.thinking);
-  const label = toolName(String(event.tool_name || "Tool activity"));
+  const label = toolName(String(event.tool_name || name || "Tool activity"));
   return (
     <article className="message message-tool">
       <header>
@@ -122,6 +122,7 @@ const ToolMessage = memo(function ToolMessage({ event }: { event: Flat }) {
           <button type="button" className="tool-disclosure" aria-expanded={expanded} aria-controls={outputId} onClick={() => setExpanded((open) => !open)}>
             <span className="message-glyph" aria-hidden="true">⚙</span>
             <span className="tool-name">{label}</span>
+            {result ? <span>{String(result.content).startsWith("✗") ? "Failed" : "Completed"}</span> : null}
             {event.time ? <time>{String(event.time)}</time> : null}
             <span className="tool-output-label">{expanded ? "Hide output" : "Show output"}</span>
             <span aria-hidden="true">{expanded ? "▾" : "▸"}</span>
@@ -132,6 +133,8 @@ const ToolMessage = memo(function ToolMessage({ event }: { event: Flat }) {
         {expanded ? <div className="message-content message-content-pre">
           {event.thinking ? <pre className="message-pre">{stripAnsi(String(event.thinking))}</pre> : null}
           {event.content ? <pre className="message-pre">{stripAnsi(String(event.content))}</pre> : null}
+          {result?.thinking ? <pre className="message-pre">{stripAnsi(String(result.thinking))}</pre> : null}
+          {result?.content ? <pre className="message-pre">{stripAnsi(String(result.content))}</pre> : null}
         </div> : null}
       </div>
     </article>
@@ -142,11 +145,10 @@ const TranscriptMessage = memo(function TranscriptMessage({ event }: { event: Fl
   const [reasoningOpen, setReasoningOpen] = useState(event.reasoning_open === 1);
   const thinking = typeof event.thinking === "string" ? event.thinking : "";
   const role = String(event.role || "system");
-  if (role === "tool") return <ToolMessage event={event} />;
   return (
     <article className={`message message-${role}`}>
       <header>
-        <span className="message-glyph" aria-hidden="true">{role === "assistant" ? "◆" : role === "user" ? "›" : role === "tool" ? "⚙" : "!"}</span>
+        <span className="message-glyph" aria-hidden="true">{role === "assistant" ? "◆" : role === "user" ? "›" : "!"}</span>
         <strong>{roleName(event.role)}</strong>
         {event.time ? <time>{String(event.time)}</time> : null}
       </header>
@@ -171,7 +173,26 @@ const TranscriptMessage = memo(function TranscriptMessage({ event }: { event: Fl
 });
 
 const TranscriptMessages = memo(function TranscriptMessages({ messages }: { messages: Flat[] }) {
-  return messages.map((message, index) => <TranscriptMessage key={`${String(message.seq ?? "local")}-${index}`} event={message} />);
+  const rows = [];
+  for (let index = 0; index < messages.length; index++) {
+    const message = messages[index];
+    const key = `${message.seq ?? "local"}-${index}`;
+    if (message.role !== "tool") {
+      rows.push(<TranscriptMessage key={key} event={message} />);
+      continue;
+    }
+
+    // Protocol 1 sends a call and its outcome as consecutive tool messages.
+    const callName = /^→ (\S+)/.exec(String(message.content))?.[1];
+    const next = messages[index + 1];
+    let result: Flat | undefined;
+    if (callName && next?.role === "tool" && /^[✓✗] (\S+)(?:\r?\n|$)/.exec(String(next.content))?.[1] === callName) {
+      result = next;
+      index++;
+    }
+    rows.push(<ToolMessage key={key} event={message} name={callName} result={result} />);
+  }
+  return rows;
 });
 
 type ComposerHandle = { clearIfMatches: (text: string) => void };
